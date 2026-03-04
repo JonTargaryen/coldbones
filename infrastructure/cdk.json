@@ -44,7 +44,24 @@
       "maxPdfPages": 20,
       "apiThrottleRateLimit": 20,
       "apiThrottleBurstLimit": 50,
-      "lmStudioUrl": "https://seratonin.tail40ae2c.ts.net"
+
+      "gpu": {
+        "model": "Qwen/Qwen3.5-35B-A3B-AWQ",
+        "modelDisplayName": "Qwen3.5-35B-A3B Q4-AWQ",
+        "vllmPort": 8000,
+        "maxModelLen": 16384,
+        "instanceTypes": ["g6e.2xlarge", "g5.12xlarge", "p3.8xlarge"],
+        "useSpot": true,
+        "spotMaxPriceUsd": "2.50",
+        "dataVolumeGib": 250,
+        "idleShutdownMinutes": 30,
+        "overnightShutdownHour": 23,
+        "morningWarmupHour": 7,
+        "timezone": "America/New_York",
+        "enableWeekendShutdown": true,
+        "budgetAlertUsd": 300,
+        "billingEmail": "admin@omlahiri.com"
+      }
     }
   }
 }

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 """
 ColdBones local development backend
-FastAPI server that calls LM Studio on Seratonin via the OpenAI-compatible API.
+FastAPI server that calls a vLLM inference server via the OpenAI-compatible API.
 
 Usage:
   pip install -r requirements.txt
-  uvicorn main:app --reload --port 8000
+  uvicorn main:app --reload --port 9000   # Use 9000 so it doesn't clash with vLLM on 8000
 
 Environment variables (set in .env):
-  LM_STUDIO_URL         https://seratonin.tail40ae2c.ts.net  (Tailscale Funnel)
-  LM_STUDIO_API_KEY     lm-studio  (any non-empty value)
+  VLLM_URL              http://localhost:8000   (local vLLM, or cloud GPU private IP)
+  VLLM_API_KEY          token-coldbones         (or any non-empty value)
+  MODEL_NAME            Qwen/Qwen3.5-35B-A3B-AWQ
   MAX_INFERENCE_TOKENS  8192
   MAX_PDF_PAGES         20
 """
@@ -38,9 +39,10 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("coldbones")
 
-LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "https://seratonin.tail40ae2c.ts.net")
-LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
-MAX_TOKENS = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
+VLLM_URL   = os.environ.get("VLLM_URL",   "http://localhost:8000")
+VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "token-coldbones")
+MODEL_NAME  = os.environ.get("MODEL_NAME",  "Qwen/Qwen3.5-35B-A3B-AWQ")
+MAX_TOKENS  = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", 20))
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB pre-compression
 
@@ -66,35 +68,34 @@ LANGUAGE_INSTRUCTIONS = {
     "bn": "IMPORTANT: Respond entirely in Bengali (বাংলা). All JSON values must be in Bengali.",
 }
 
-lm_client: OpenAI | None = None
-active_model: str = "qwen3.5"
+vllm_client: OpenAI | None = None
+active_model: str = MODEL_NAME
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global lm_client, active_model
+    global vllm_client, active_model
     try:
-        lm_client = OpenAI(
-            base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
-            api_key=LM_STUDIO_API_KEY,
+        probe = OpenAI(
+            base_url=f"{VLLM_URL.rstrip('/')}/v1",
+            api_key=VLLM_API_KEY,
             timeout=10.0,
         )
-        # Try to fetch the loaded model name
-        models = lm_client.models.list()
+        models = probe.models.list()
         if models.data:
             active_model = models.data[0].id
-        lm_client = OpenAI(
-            base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
-            api_key=LM_STUDIO_API_KEY,
+        vllm_client = OpenAI(
+            base_url=f"{VLLM_URL.rstrip('/')}/v1",
+            api_key=VLLM_API_KEY,
             timeout=120.0,
         )
-        logger.info(f"LM Studio ready at {LM_STUDIO_URL} — model: {active_model}")
+        logger.info(f"vLLM ready at {VLLM_URL} — model: {active_model}")
     except Exception as e:
-        logger.warning(f"Could not reach LM Studio on startup: {e}. Will retry on first request.")
+        logger.warning(f"Could not reach vLLM on startup: {e}. Will retry on first request.")
     yield
 
 
-app = FastAPI(title="ColdBones API", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="ColdBones API (local dev)", version="4.0.0", lifespan=lifespan)
 
 # ── Local dev upload store (in-memory) ────────────────────────────────────────
 # Maps s3Key → raw bytes so the presign → upload → analyze flow works locally
@@ -138,14 +139,14 @@ async def local_upload(token: str, filename: str, request: Request):
 
 @app.get("/api/health")
 async def health():
-    global lm_client, active_model
+    global vllm_client, active_model
     model_loaded = False
     current_model = active_model
 
     try:
         probe = OpenAI(
-            base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
-            api_key=LM_STUDIO_API_KEY,
+            base_url=f"{VLLM_URL.rstrip('/')}/v1",
+            api_key=VLLM_API_KEY,
             timeout=5.0,
         )
         models = probe.models.list()
@@ -159,8 +160,8 @@ async def health():
     return {
         "status": "ok" if model_loaded else "degraded",
         "model": current_model,
-        "provider": "LM Studio (Seratonin)",
-        "lm_studio_url": LM_STUDIO_URL,
+        "provider": "vLLM (Cloud GPU)",
+        "vllm_url": VLLM_URL,
         "model_loaded": model_loaded,
     }
 
@@ -172,8 +173,8 @@ async def analyze(request: Request):
     2. application/json     — {s3Key, filename, lang, mode}  (used by AWS flow
        after uploading to S3 / localupload)
     """
-    if lm_client is None:
-        raise HTTPException(503, "LM Studio client not initialised — check server logs")
+    if vllm_client is None:
+        raise HTTPException(503, "vLLM client not initialised — is the vLLM server running?")
 
     ct = request.headers.get("content-type", "")
 
@@ -235,7 +236,7 @@ async def analyze(request: Request):
     content.append({"type": "text", "text": analysis_text})
 
     try:
-        response = lm_client.chat.completions.create(
+        response = vllm_client.chat.completions.create(
             model=active_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -248,8 +249,8 @@ async def analyze(request: Request):
     except APIConnectionError:
         raise HTTPException(
             502,
-            f"Cannot reach LM Studio at {LM_STUDIO_URL}. "
-            "Make sure LM Studio is running with a model loaded and Tailscale Funnel is active.",
+            f"Cannot reach vLLM at {VLLM_URL}. "
+            "Make sure vLLM is running (locally: vllm serve Qwen/Qwen3.5-35B-A3B-AWQ --port 8000).",
         )
     except Exception as e:
         raise HTTPException(502, f"Inference failed: {e}")
@@ -276,7 +277,7 @@ async def analyze(request: Request):
         "processing_time_ms": elapsed_ms,
         "mode": mode,
         "model": active_model,
-        "provider": "LM Studio (Seratonin)",
+        "provider": "vLLM (Cloud GPU)",
     }
 
 

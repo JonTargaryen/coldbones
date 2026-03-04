@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # ColdBones CDK deployment script
-# Usage: ./scripts/deploy.sh [stack-name]
-#   stack-name: all | storage | queue | api (default: all)
+#
+# Usage: ./scripts/deploy.sh [stack]
+#   stack: all | storage | queue | network | gpu | api  (default: all)
+#
+# Stack deploy order: Storage → Queue → Network → Gpu → Api
+#
+# NOTE: The 250 GB EBS volume created by ColdbonesGpu has RemovalPolicy=RETAIN.
+#       Destroying the stack will NOT delete the volume. This is intentional —
+#       the model data is stored there.  Delete manually if needed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +33,42 @@ echo "→ Bootstrapping CDK (safe to re-run)…"
 npx cdk bootstrap "aws://$(aws sts get-caller-identity --query Account --output text)/$REGION" \
   --region "$REGION" 2>&1 | tail -5
 
-# Deploy stacks in dependency order
+_deploy_all() {
+  echo "→ Deploying all stacks: Storage → Queue → Network → Gpu → Api"
+  npx cdk deploy \
+    ColdbonesStorage \
+    ColdbonesQueue \
+    ColdbonesNetwork \
+    ColdbonesGpu \
+    ColdbonesApi \
+    --require-approval never \
+    --region "$REGION" \
+    --outputs-file "$SCRIPT_DIR/cdk-outputs.json"
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " ✓ Deployment complete!"
+  echo "   Stack outputs → scripts/cdk-outputs.json"
+  echo ""
+  if [ -f "$SCRIPT_DIR/cdk-outputs.json" ]; then
+    CLOUDFRONT=$(jq -r '.ColdbonesStorage.CloudFrontDomain // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
+    APP_URL=$(jq -r '.ColdbonesStorage.AppUrl // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
+    WS_URL=$(jq -r '.ColdbonesApi.WsApiUrl // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
+    API_URL=$(jq -r '.ColdbonesApi.ApiUrl // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
+    GPU_VOL=$(jq -r '.ColdbonesGpu.GpuEbsVolumeId // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
+
+    [ -n "$CLOUDFRONT" ] && echo "   CloudFront URL: https://$CLOUDFRONT"
+    [ -n "$APP_URL"    ] && echo "   App URL:        $APP_URL"
+    [ -n "$API_URL"    ] && echo "   API (REST):     $API_URL"
+    [ -n "$WS_URL"     ] && echo "   API (WS):       $WS_URL"
+    [ -n "$GPU_VOL"    ] && echo "   GPU EBS Volume: $GPU_VOL  ← DO NOT delete manually, stores model data"
+    echo ""
+    echo "   Run GPU health check:  ./scripts/gpu-startup-validate.sh"
+    echo "   Run e2e validation:    ./scripts/validate.sh"
+  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
 case "$STACK_ARG" in
   storage)
     echo "→ Deploying ColdbonesStorage…"
@@ -36,38 +78,19 @@ case "$STACK_ARG" in
     echo "→ Deploying ColdbonesQueue…"
     npx cdk deploy ColdbonesQueue --require-approval never --region "$REGION"
     ;;
+  network)
+    echo "→ Deploying ColdbonesNetwork…"
+    npx cdk deploy ColdbonesNetwork --require-approval never --region "$REGION"
+    ;;
+  gpu)
+    echo "→ Deploying ColdbonesGpu…"
+    npx cdk deploy ColdbonesGpu --require-approval never --region "$REGION"
+    ;;
   api)
     echo "→ Deploying ColdbonesApi…"
     npx cdk deploy ColdbonesApi --require-approval never --region "$REGION"
     ;;
   all|*)
-    echo "→ Deploying all stacks (Storage → Queue → Api)…"
-    npx cdk deploy ColdbonesStorage ColdbonesQueue ColdbonesApi \
-      --require-approval never \
-      --region "$REGION" \
-      --outputs-file "$SCRIPT_DIR/cdk-outputs.json"
-
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo " ✓ Deployment complete!"
-    echo "   Stack outputs saved to: scripts/cdk-outputs.json"
-    echo ""
-    if [ -f "$SCRIPT_DIR/cdk-outputs.json" ]; then
-      CLOUDFRONT=$(jq -r '.ColdbonesStorage.CloudFrontDomain // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
-      APP_URL=$(jq -r '.ColdbonesStorage.AppUrl // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
-      NS=$(jq -r '.ColdbonesStorage.HostedZoneNameServers // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
-      [ -n "$CLOUDFRONT" ] && echo "   CloudFront URL (works immediately): https://$CLOUDFRONT"
-      [ -n "$APP_URL"    ] && echo "   App URL (after DNS propagation):    $APP_URL"
-      if [ -n "$NS" ]; then
-        echo ""
-        echo " ⚡ ACTION REQUIRED — Paste these 4 nameservers into Squarespace:"
-        echo "    Domains → omlahiri.com → DNS Settings → Custom Nameservers"
-        echo ""
-        echo "$NS" | tr ',' '\n' | sed 's/^ */    /'
-        echo ""
-        echo "   DNS propagation takes up to 48h. Use the CloudFront URL above in the meantime."
-      fi
-    fi
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    _deploy_all
     ;;
 esac

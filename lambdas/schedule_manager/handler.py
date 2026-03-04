@@ -1,28 +1,27 @@
 """
 Lambda: schedule-manager
 
-Handles scheduled EventBridge rules for overnight GPU management:
+Handles scheduled EventBridge rules for overnight GPU (vLLM) management.
 
-- overnight-shutdown (11 PM daily):
-    Sets slow-mode ASG max=0, desired=0 to prevent overnight GPU charges.
-    Optionally sets fast-mode ASG desired=0, min=0 on weekends.
+Actions (passed via event.action or event.detail.action):
 
-- morning-warmup (7 AM daily):
-    Restores slow-mode ASG max=1 to allow SQS-triggered scaling.
-    Optionally restores fast-mode ASG on Monday.
+  overnight-shutdown  — Scale GPU ASG to desired=0, max=0 (no new instances).
+                        Triggered 04:00 UTC Mon–Fri (11 PM ET).
 
-- weekend-fast-shutdown (Friday 11 PM, optional):
-    Sets fast-mode ASG min=0, desired=0 to save ~28% monthly.
+  morning-warmup      — Restore GPU ASG max=1 so SQS demand can trigger
+                        scale-up on the next inference request.
+                        Triggered 12:00 UTC Mon–Fri (7 AM ET).
 
-- weekend-fast-warmup (Monday 7 AM, optional):
-    Restores fast-mode ASG min=1, desired=1.
+  weekend-shutdown    — Scale GPU ASG to 0 for the full weekend.
+                        Triggered Sat 03:00 UTC.
 
-EventBridge event:
-  { "action": "overnight-shutdown" | "morning-warmup" |
-               "weekend-fast-shutdown" | "weekend-fast-warmup" }
+  monday-warmup       — Restore GPU ASG max=1 at start of week.
+                        Triggered Mon 12:00 UTC.
+
+ASG name resolved from: GPU_ASG_NAME env var (set by ApiStack) with
+fallback to SSM /coldbones/gpu-asg-name.
 """
 
-import json
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -30,118 +29,128 @@ from typing import Any
 import boto3
 
 autoscaling = boto3.client("autoscaling")
-cloudwatch = boto3.client("cloudwatch")
+cloudwatch  = boto3.client("cloudwatch")
+ssm_client  = boto3.client("ssm")
 
-SLOW_ASG_NAME = os.environ["SLOW_ASG_NAME"]
-FAST_ASG_NAME = os.environ.get("FAST_ASG_NAME", "")
-ENABLE_WEEKEND_FAST_SHUTDOWN = os.environ.get("ENABLE_WEEKEND_FAST_SHUTDOWN", "false").lower() == "true"
+# Env var set by ApiStack from gpu-stack output; fall back to SSM
+_GPU_ASG_NAME_ENV   = os.environ.get("GPU_ASG_NAME", "")
+_GPU_ASG_NAME_PARAM = os.environ.get("GPU_ASG_PARAM", "/coldbones/gpu-asg-name")
+
+
+def _gpu_asg_name() -> str:
+    if _GPU_ASG_NAME_ENV:
+        return _GPU_ASG_NAME_ENV
+    try:
+        return ssm_client.get_parameter(Name=_GPU_ASG_NAME_PARAM)["Parameter"]["Value"]
+    except Exception as e:
+        raise RuntimeError(f"Cannot resolve GPU ASG name from SSM {_GPU_ASG_NAME_PARAM}: {e}") from e
 
 
 def handler(event: dict, _context: Any) -> dict:
-    action = event.get("action", "") or (event.get("detail", {}) or {}).get("action", "")
+    action = (
+        event.get("action")
+        or (event.get("detail") or {}).get("action")
+        or ""
+    )
 
     print(f"INFO: schedule-manager action={action!r} at {datetime.now(timezone.utc).isoformat()}")
 
-    if action == "overnight-shutdown":
-        return _overnight_shutdown()
-    elif action == "morning-warmup":
-        return _morning_warmup()
-    elif action == "weekend-fast-shutdown" and ENABLE_WEEKEND_FAST_SHUTDOWN:
-        return _weekend_fast_shutdown()
-    elif action == "weekend-fast-warmup" and ENABLE_WEEKEND_FAST_SHUTDOWN:
-        return _weekend_fast_warmup()
-    else:
-        print(f"WARNING: Unknown or disabled action: {action!r}")
+    dispatch = {
+        "overnight-shutdown": _overnight_shutdown,
+        "morning-warmup":     _morning_warmup,
+        "weekend-shutdown":   _weekend_shutdown,
+        "monday-warmup":      _monday_warmup,
+    }
+
+    fn = dispatch.get(action)
+    if fn is None:
+        print(f"WARNING: Unknown action: {action!r}")
         return {"status": "skipped", "action": action}
 
+    return fn()
+
+
+# ── Action handlers ──────────────────────────────────────────────────────────
 
 def _overnight_shutdown() -> dict:
-    """11 PM daily — scale slow ASG to 0, optionally fast ASG on weekends."""
-    results = {}
-
-    # Slow ASG: scale to zero for overnight
+    """04:00 UTC weekdays — shut down GPU, no charges overnight."""
+    asg = _gpu_asg_name()
     try:
         autoscaling.update_auto_scaling_group(
-            AutoScalingGroupName=SLOW_ASG_NAME,
+            AutoScalingGroupName=asg,
             MinSize=0,
             MaxSize=0,
             DesiredCapacity=0,
         )
-        print(f"INFO: Slow ASG {SLOW_ASG_NAME} scaled to 0/0/0 (overnight shutdown)")
-        results["slow_asg"] = "scaled_to_zero"
+        print(f"INFO: GPU ASG {asg} → 0/0/0 (overnight shutdown)")
+        _emit("overnight-shutdown")
+        return {"status": "ok", "action": "overnight-shutdown", "asg": asg}
     except Exception as e:
-        print(f"ERROR: Failed to scale slow ASG: {e}")
-        results["slow_asg"] = f"error: {e}"
-
-    _emit_metric("ScheduledAction", "overnight-shutdown")
-    return {"status": "ok", "action": "overnight-shutdown", "results": results}
+        print(f"ERROR: overnight-shutdown failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 def _morning_warmup() -> dict:
-    """7 AM daily — restore slow ASG max=1 to allow SQS-triggered scaling."""
-    results = {}
-
+    """12:00 UTC weekdays — re-allow GPU scale-up on next request."""
+    asg = _gpu_asg_name()
     try:
         autoscaling.update_auto_scaling_group(
-            AutoScalingGroupName=SLOW_ASG_NAME,
+            AutoScalingGroupName=asg,
             MinSize=0,
             MaxSize=1,
-            # Do NOT set DesiredCapacity — let CloudWatch alarm drive it
+            # Don't set DesiredCapacity — let SQS / analyze_router trigger it
         )
-        print(f"INFO: Slow ASG {SLOW_ASG_NAME} max restored to 1 (morning warmup)")
-        results["slow_asg"] = "max_restored"
+        print(f"INFO: GPU ASG {asg} → max=1 (morning warmup ready)")
+        _emit("morning-warmup")
+        return {"status": "ok", "action": "morning-warmup", "asg": asg}
     except Exception as e:
-        print(f"ERROR: Failed to restore slow ASG: {e}")
-        results["slow_asg"] = f"error: {e}"
-
-    _emit_metric("ScheduledAction", "morning-warmup")
-    return {"status": "ok", "action": "morning-warmup", "results": results}
+        print(f"ERROR: morning-warmup failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 
-def _weekend_fast_shutdown() -> dict:
-    """Friday 11 PM — scale fast-mode ASG to 0 for the weekend."""
-    if not FAST_ASG_NAME:
-        return {"status": "skipped", "reason": "FAST_ASG_NAME not configured"}
-
+def _weekend_shutdown() -> dict:
+    """Sat 03:00 UTC — shut down for the full weekend."""
+    asg = _gpu_asg_name()
     try:
         autoscaling.update_auto_scaling_group(
-            AutoScalingGroupName=FAST_ASG_NAME,
+            AutoScalingGroupName=asg,
             MinSize=0,
             MaxSize=0,
             DesiredCapacity=0,
         )
-        print(f"INFO: Fast ASG {FAST_ASG_NAME} scaled to 0 for weekend")
-        _emit_metric("ScheduledAction", "weekend-fast-shutdown")
-        return {"status": "ok", "action": "weekend-fast-shutdown"}
+        print(f"INFO: GPU ASG {asg} → 0/0/0 (weekend shutdown)")
+        _emit("weekend-shutdown")
+        return {"status": "ok", "action": "weekend-shutdown", "asg": asg}
     except Exception as e:
+        print(f"ERROR: weekend-shutdown failed: {e}")
         return {"status": "error", "error": str(e)}
 
 
-def _weekend_fast_warmup() -> dict:
-    """Monday 7 AM — restore fast-mode ASG min=1, desired=1."""
-    if not FAST_ASG_NAME:
-        return {"status": "skipped", "reason": "FAST_ASG_NAME not configured"}
-
+def _monday_warmup() -> dict:
+    """Mon 12:00 UTC — restore GPU availability for the week."""
+    asg = _gpu_asg_name()
     try:
         autoscaling.update_auto_scaling_group(
-            AutoScalingGroupName=FAST_ASG_NAME,
-            MinSize=1,
+            AutoScalingGroupName=asg,
+            MinSize=0,
             MaxSize=1,
-            DesiredCapacity=1,
         )
-        print(f"INFO: Fast ASG {FAST_ASG_NAME} restored to 1/1/1 for the week")
-        _emit_metric("ScheduledAction", "weekend-fast-warmup")
-        return {"status": "ok", "action": "weekend-fast-warmup"}
+        print(f"INFO: GPU ASG {asg} → max=1 (monday warmup ready)")
+        _emit("monday-warmup")
+        return {"status": "ok", "action": "monday-warmup", "asg": asg}
     except Exception as e:
+        print(f"ERROR: monday-warmup failed: {e}")
         return {"status": "error", "error": str(e)}
 
 
-def _emit_metric(metric_name: str, action: str) -> None:
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _emit(action: str) -> None:
     try:
         cloudwatch.put_metric_data(
             Namespace="Coldbones/Scheduling",
             MetricData=[{
-                "MetricName": metric_name,
+                "MetricName": "ScheduledAction",
                 "Dimensions": [{"Name": "Action", "Value": action}],
                 "Value": 1,
                 "Unit": "Count",
