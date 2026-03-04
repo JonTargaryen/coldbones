@@ -53,7 +53,7 @@ QUEUE_URL     = os.environ['ANALYZE_QUEUE_URL']
 UPLOAD_BUCKET = os.environ['UPLOAD_BUCKET']
 JOBS_TABLE    = os.environ['JOBS_TABLE']
 LM_STUDIO_URL     = os.environ.get('LM_STUDIO_URL', 'http://localhost:1234')
-LM_STUDIO_API_KEY = os.environ['LM_STUDIO_API_KEY']   # required — set in .env
+LM_STUDIO_API_KEY = os.environ.get('LM_STUDIO_API_KEY', 'lm-studio')
 MODEL_NAME    = os.environ.get('MODEL_NAME', 'Qwen/Qwen3.5-35B-A3B-AWQ')
 
 MAX_TOKENS    = int(os.environ.get('MAX_INFERENCE_TOKENS', 8192))
@@ -113,9 +113,7 @@ def check_lm_health() -> bool:
     import urllib.request
 
     try:
-        req = urllib.request.Request(f'{LM_STUDIO_URL.rstrip("/")}/v1/models', method='GET')
-        req.add_header('Authorization', f'Bearer {LM_STUDIO_API_KEY}')
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(f'{LM_STUDIO_URL.rstrip("/")}/v1/models', timeout=5) as r:
             return r.status == 200
     except Exception:
         return False

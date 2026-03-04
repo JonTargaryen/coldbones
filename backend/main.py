@@ -40,7 +40,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("coldbones")
 
 LM_STUDIO_URL     = os.environ.get("LM_STUDIO_URL",     "http://localhost:1234")
-LM_STUDIO_API_KEY = os.environ["LM_STUDIO_API_KEY"]   # required — set in .env
+LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
 MODEL_NAME        = os.environ.get("MODEL_NAME",        "qwen/qwen3.5-35b-a3b")
 MAX_TOKENS  = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", 20))

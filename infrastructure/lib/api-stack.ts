@@ -18,9 +18,8 @@ export interface ApiStackProps extends cdk.StackProps {
   analysisQueue: sqs.IQueue;
 
   // Desktop SSM params (Tailscale Funnel URL)
-  desktopUrlParamName?: string;     // default: /coldbones/desktop-url
-  desktopPortParamName?: string;    // default: /coldbones/desktop-port
-  desktopApikeyParamName?: string;  // default: /coldbones/desktop-apikey
+  desktopUrlParamName?: string;   // default: /coldbones/desktop-url
+  desktopPortParamName?: string;  // default: /coldbones/desktop-port
 
   // Model
   modelName?: string;
@@ -48,9 +47,8 @@ export class ApiStack extends cdk.Stack {
     const lambdaRoot          = path.join(__dirname, '../../lambdas');
     const allowedOrigins      = props.allowedOrigins ?? ['*'];
     const modelName           = props.modelName ?? 'Qwen/Qwen3.5-35B-A3B-AWQ';
-    const desktopUrlParam     = props.desktopUrlParamName    ?? '/coldbones/desktop-url';
-    const desktopPortParam    = props.desktopPortParamName   ?? '/coldbones/desktop-port';
-    const desktopApikeyParam  = props.desktopApikeyParamName ?? '/coldbones/desktop-apikey';
+    const desktopUrlParam     = props.desktopUrlParamName  ?? '/coldbones/desktop-url';
+    const desktopPortParam    = props.desktopPortParamName ?? '/coldbones/desktop-port';
 
     // ─── Shared Lambda role ────────────────────────────────────────────────
     const lambdaRole = new iam.Role(this, 'LambdaRole', {
@@ -82,9 +80,8 @@ export class ApiStack extends cdk.Stack {
       UPLOAD_BUCKET:        props.uploadBucket.bucketName,
       JOBS_TABLE:           props.jobsTable.tableName,
       ANALYZE_QUEUE_URL:    props.analysisQueue.queueUrl,
-      DESKTOP_URL_PARAM:       desktopUrlParam,
-      DESKTOP_PORT_PARAM:      desktopPortParam,
-      DESKTOP_APIKEY_PARAM:    desktopApikeyParam,
+      DESKTOP_URL_PARAM:    desktopUrlParam,
+      DESKTOP_PORT_PARAM:   desktopPortParam,
       MODEL_NAME:           modelName,
       POWERTOOLS_SERVICE_NAME: 'coldbones',
     };

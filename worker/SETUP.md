@@ -45,7 +45,7 @@ Verify: `curl http://localhost:1234/v1/models` should return a JSON list with th
 
 ## 3. AWS SSM Parameters
 
-Set these three parameters so the Lambdas can discover the desktop endpoint and authenticate:
+Set these two parameters so the Lambdas can discover the desktop endpoint:
 
 ```bash
 # Replace with your actual Tailscale Funnel hostname
@@ -61,14 +61,6 @@ aws ssm put-parameter \
   --name "/coldbones/desktop-port" \
   --value "443" \
   --type String \
-  --overwrite
-
-# LM Studio API key — stored encrypted (SecureString)
-# Generate in LM Studio → Developer → API Keys
-aws ssm put-parameter \
-  --name "/coldbones/desktop-apikey" \
-  --value "sk-..." \
-  --type SecureString \
   --overwrite
 ```
 
