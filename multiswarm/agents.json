@@ -1,0 +1,91 @@
+{
+  "version": "1.0.0",
+  "updatedAt": "2026-03-04T00:00:00Z",
+  "agents": [
+    {
+      "id": "swarm-orchestrator",
+      "name": "Swarm Orchestrator",
+      "domain": "Program coordination and release sequencing",
+      "ownsVariables": [
+        "FEATURE_FLAG_DESKTOP_INFERENCE",
+        "ROLLBACK_ROUTE"
+      ]
+    },
+    {
+      "id": "inference-agent",
+      "name": "Inference Agent",
+      "domain": "Model/runtime validation and vLLM serving",
+      "ownsVariables": [
+        "MODEL_RUNTIME",
+        "MODEL_ARTIFACT_ID",
+        "MODEL_QUANT_FORMAT",
+        "INFERENCE_MAX_TOKENS",
+        "INFERENCE_CONCURRENCY"
+      ]
+    },
+    {
+      "id": "worker-agent",
+      "name": "Worker Agent",
+      "domain": "Desktop queue consumer and inference execution",
+      "ownsVariables": [
+        "WORKER_HEARTBEAT_INTERVAL_S",
+        "WORKER_MAX_RETRY_COUNT",
+        "RESULT_STORAGE_PREFIX"
+      ]
+    },
+    {
+      "id": "api-agent",
+      "name": "API Agent",
+      "domain": "API contract and backend request lifecycle",
+      "ownsVariables": [
+        "API_ANALYZE_MODE",
+        "API_STATUS_SCHEMA_VERSION",
+        "JOB_STATE_MACHINE"
+      ]
+    },
+    {
+      "id": "frontend-agent",
+      "name": "Frontend Agent",
+      "domain": "UX contract and status handling",
+      "ownsVariables": [
+        "FRONTEND_MODE_STRATEGY",
+        "FRONTEND_POLL_INTERVAL_MS"
+      ]
+    },
+    {
+      "id": "infra-agent",
+      "name": "Infra Agent",
+      "domain": "CDK stack composition and deployment topology",
+      "ownsVariables": [
+        "STACK_SET_MINIMAL",
+        "DEPLOY_ORDER"
+      ]
+    },
+    {
+      "id": "security-agent",
+      "name": "Security Agent",
+      "domain": "IAM, credentials, and access control",
+      "ownsVariables": [
+        "WORKER_IAM_POLICY_SCOPE",
+        "CREDENTIAL_ROTATION_DAYS"
+      ]
+    },
+    {
+      "id": "reliability-agent",
+      "name": "Reliability Agent",
+      "domain": "Monitoring, alarms, and incident response",
+      "ownsVariables": [
+        "ALERTING_SLO_MINUTES",
+        "QUEUE_STALE_JOB_THRESHOLD_MINUTES"
+      ]
+    },
+    {
+      "id": "docs-agent",
+      "name": "Docs Agent",
+      "domain": "Runbooks, architecture docs, and onboarding",
+      "ownsVariables": [
+        "RUNBOOK_SCHEMA_VERSION"
+      ]
+    }
+  ]
+}

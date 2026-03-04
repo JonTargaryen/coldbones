@@ -70,3 +70,8 @@ Exit criteria:
 2. Stand up worker lambda for queue jobs
 3. Wire runtime service discovery from V2 SSM parameters
 4. Add integration test for milestone 1 flow
+
+## Related Planning Docs
+
+- `docs/desktop-5090-findings-summary.md`
+- `docs/desktop-5090-ticket-backlog.md`
