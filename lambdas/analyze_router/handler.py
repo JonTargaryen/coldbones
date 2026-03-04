@@ -3,7 +3,7 @@ Lambda: analyze-router
 
 Routes POST /api/analyze:
   fast    → checks desktop health; if alive, synchronously invokes
-             analyze-orchestrator (which calls desktop vLLM directly).
+             analyze-orchestrator (which calls desktop LM Studio directly).
              Falls back to offline queue if desktop is down.
   offline → writes QUEUED to DynamoDB + enqueues to SQS.
              Desktop worker processes the job when it comes back online.
@@ -65,10 +65,10 @@ def handler(event: dict, _context: Any) -> dict:
     }
 
     if mode == 'fast':
-        # Check desktop health before committing to sync path.
+        # Check desktop health before committing to the async path.
         # Falls back to offline queue if the desktop GPU is not reachable.
         if is_desktop_alive():
-            return _invoke_sync(payload)
+            return _invoke_async(payload, job_id)
         else:
             print(f'[analyze_router] Desktop offline — routing job={job_id} to offline queue')
             payload['mode'] = 'offline'
@@ -78,19 +78,54 @@ def handler(event: dict, _context: Any) -> dict:
     return _enqueue(payload)
 
 
-def _invoke_sync(payload: dict) -> dict:
+def _invoke_async(payload: dict, job_id: str) -> dict:
+    """Fire the orchestrator asynchronously and return 202 immediately.
+    API Gateway has a 29-second hard limit — synchronous invocation always
+    times out for LM Studio inference (30-90 s).  Instead:
+      1. Write PROCESSING to DynamoDB so /api/status returns immediately.
+      2. Invoke orchestrator with InvocationType='Event' (fire-and-forget).
+      3. Return 202 + jobId — frontend polls GET /api/status/{jobId}.
+    """
     if not ORCHESTRATOR_FUNCTION_ARN:
         return _error(500, 'ORCHESTRATOR_FUNCTION_ARN not configured')
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    if JOBS_TABLE:
+        try:
+            dynamodb.Table(JOBS_TABLE).put_item(Item={
+                'jobId':     job_id,
+                'status':    'PROCESSING',
+                'createdAt': now,
+                'startedAt': now,
+                's3Key':     payload.get('s3Key', ''),
+                'filename':  payload.get('filename', ''),
+                'lang':      payload.get('lang', 'en'),
+                'mode':      'fast',
+                'ttl':       int(datetime.now(timezone.utc).timestamp()) + 86400,
+            })
+        except Exception as e:
+            print(f'[analyze_router] DynamoDB write failed (non-fatal): {e}')
+
     try:
-        resp = lambda_client.invoke(
+        lambda_client.invoke(
             FunctionName=ORCHESTRATOR_FUNCTION_ARN,
-            InvocationType='RequestResponse',
+            InvocationType='Event',
             Payload=json.dumps(payload).encode(),
         )
-        result_raw = resp['Payload'].read()
-        return json.loads(result_raw)
     except ClientError as e:
         return _error(502, f'Orchestrator invocation failed: {e}')
+
+    return {
+        'statusCode': 202,
+        'headers': _HEADERS,
+        'body': json.dumps({
+            'jobId':   job_id,
+            'status':  'processing',
+            'mode':    'fast',
+            'message': 'Analysis started. Poll /api/status/{jobId} for results.',
+        }),
+    }
 
 
 def _enqueue(payload: dict, fallback: bool = False) -> dict:

@@ -3,7 +3,7 @@
 Coldbones Desktop Worker
 
 Runs on the RTX 5090 desktop. Long-polls SQS for analysis jobs, runs
-inference locally via vLLM, and writes results back to AWS (DynamoDB + S3).
+inference locally via LM Studio, and writes results back to AWS (DynamoDB + S3).
 
 No inbound ports required — all traffic is outbound:
   SQS  ← long-poll (outbound HTTPS)
@@ -52,8 +52,8 @@ logger = logging.getLogger('coldbones.worker')
 QUEUE_URL     = os.environ['ANALYZE_QUEUE_URL']
 UPLOAD_BUCKET = os.environ['UPLOAD_BUCKET']
 JOBS_TABLE    = os.environ['JOBS_TABLE']
-VLLM_URL      = os.environ.get('VLLM_URL', 'http://localhost:8000')
-VLLM_API_KEY  = os.environ.get('VLLM_API_KEY', 'coldbones')
+LM_STUDIO_URL     = os.environ.get('LM_STUDIO_URL', 'http://localhost:1234')
+LM_STUDIO_API_KEY = os.environ.get('LM_STUDIO_API_KEY', 'lm-studio')
 MODEL_NAME    = os.environ.get('MODEL_NAME', 'Qwen/Qwen3.5-35B-A3B-AWQ')
 
 MAX_TOKENS    = int(os.environ.get('MAX_INFERENCE_TOKENS', 8192))
@@ -91,47 +91,32 @@ LANGUAGE_INSTRUCTIONS = {
     'bn': 'IMPORTANT: Respond entirely in Bengali (বাংলা). All JSON values must be in Bengali.',
 }
 
-# ── vLLM client ───────────────────────────────────────────────────────────────
+# ── LM Studio client ──────────────────────────────────────────────────────────
 
-_vllm_client: OpenAI | None = None
+_lm_client: OpenAI | None = None
 
 
-def get_vllm_client() -> OpenAI:
-    global _vllm_client
-    if _vllm_client is None:
-        _vllm_client = OpenAI(
-            base_url=f'{VLLM_URL.rstrip("/")}/v1',
-            api_key=VLLM_API_KEY,
+def get_lm_client() -> OpenAI:
+    global _lm_client
+    if _lm_client is None:
+        _lm_client = OpenAI(
+            base_url=f'{LM_STUDIO_URL.rstrip("/")}/v1',
+            api_key=LM_STUDIO_API_KEY,
             timeout=840.0,   # 14 min for large PDFs
         )
-        logger.info('vLLM client initialised → %s (model=%s)', VLLM_URL, MODEL_NAME)
-    return _vllm_client
+        logger.info('LM Studio client initialised → %s (model=%s)', LM_STUDIO_URL, MODEL_NAME)
+    return _lm_client
 
 
-def check_vllm_health() -> bool:
-    """Return True if the inference endpoint is reachable.
-
-    Supports both vLLM (/health) and OpenAI-compatible servers like
-    LM Studio (/v1/models).
-    """
+def check_lm_health() -> bool:
+    """Return True if LM Studio's /v1/models endpoint is reachable."""
     import urllib.request
-    import urllib.error
 
-    base = VLLM_URL.rstrip('/')
-    checks = [f'{base}/health', f'{base}/v1/models']
-
-    for url in checks:
-        try:
-            with urllib.request.urlopen(url, timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                continue
-        except Exception:
-            continue
-
-    return False
+    try:
+        with urllib.request.urlopen(f'{LM_STUDIO_URL.rstrip("/")}/v1/models', timeout=5) as r:
+            return r.status == 200
+    except Exception:
+        return False
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -152,12 +137,12 @@ signal.signal(signal.SIGINT, _handle_signal)
 def run():
     logger.info('Coldbones worker starting. Queue: %s', QUEUE_URL)
 
-    # Wait for vLLM before entering the poll loop
+    # Wait for LM Studio before entering the poll loop
     while _running:
-        if check_vllm_health():
-            logger.info('vLLM is healthy at %s', VLLM_URL)
+        if check_lm_health():
+            logger.info('LM Studio is healthy at %s', LM_STUDIO_URL)
             break
-        logger.warning('vLLM not ready at %s — retrying in 15 s', VLLM_URL)
+        logger.warning('LM Studio not ready at %s — retrying in 15 s', LM_STUDIO_URL)
         time.sleep(15)
 
     while _running:
@@ -273,8 +258,8 @@ def _process(s3_key: str, lang: str, job_id: str, filename: str) -> dict:
         analysis_text = f'{analysis_text}\n\n{lang_instr}'
     content.append({'type': 'text', 'text': analysis_text})
 
-    # 4. Call local vLLM
-    client = get_vllm_client()
+    # 4. Call local LM Studio
+    client = get_lm_client()
     start  = time.time()
     response = client.chat.completions.create(
         model=MODEL_NAME,
@@ -298,7 +283,7 @@ def _process(s3_key: str, lang: str, job_id: str, filename: str) -> dict:
         'processing_time_ms':     elapsed_ms,
         'finish_reason':          finish_reason,
         'model':                  MODEL_NAME,
-        'provider':               'vLLM (desktop RTX 5090)',
+        'provider':               'LM Studio (desktop RTX 5090)',
         'mode':                   'offline',
         'filename':               filename,
     }

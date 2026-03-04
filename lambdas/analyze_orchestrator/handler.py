@@ -4,13 +4,13 @@ Lambda: analyze-orchestrator  (fast-mode)
 Flow:
   1. Download the uploaded file from S3
   2. Convert to base64 PNG data URL(s) — handles JPEG, PNG, WEBP, PDF
-  3. Call desktop vLLM via Tailscale Funnel URL (OpenAI-compatible API)
+  3. Call desktop LM Studio via Tailscale Funnel URL (OpenAI-compatible API)
   4. Save the result JSON back to S3 alongside the original file
   5. Return the full analysis payload to the caller (analyze_router)
 
 Desktop endpoint discovered at runtime from SSM:
   /coldbones/desktop-url  → Tailscale Funnel base URL
-  /coldbones/desktop-port → vLLM port (default 8000)
+  /coldbones/desktop-port → LM Studio port (default 1234)
 
 Event:
   { "jobId": "...", "s3Key": "uploads/<uuid>/photo.jpg",
@@ -26,6 +26,7 @@ import re
 import sys
 import time
 import traceback
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -35,15 +36,17 @@ import boto3
 from botocore.exceptions import ClientError
 from PIL import Image
 
-# Desktop client — resolves vLLM endpoint from SSM (Tailscale Funnel URL)
+# Desktop client — resolves LM Studio endpoint from SSM (Tailscale Funnel URL)
 sys.path.insert(0, '/var/task')
 from desktop_client import get_openai_client
 
-s3_client = boto3.client('s3')
+s3_client  = boto3.client('s3')
+dynamodb   = boto3.resource('dynamodb')
 
-UPLOAD_BUCKET  = os.environ['UPLOAD_BUCKET']
-MAX_TOKENS     = int(os.environ.get('MAX_INFERENCE_TOKENS', 8192))
-MAX_PDF_PAGES  = int(os.environ.get('MAX_PDF_PAGES', 20))
+UPLOAD_BUCKET    = os.environ['UPLOAD_BUCKET']
+JOBS_TABLE_NAME  = os.environ.get('JOBS_TABLE', '')
+MAX_TOKENS       = int(os.environ.get('MAX_INFERENCE_TOKENS', 8192))
+MAX_PDF_PAGES    = int(os.environ.get('MAX_PDF_PAGES', 20))
 
 HEADERS = {
     'Content-Type': 'application/json',
@@ -79,7 +82,7 @@ def handler(event: dict, _context: Any) -> dict:
     filename = event.get('filename', 'file')
 
     if not s3_key:
-        return _error(400, 'Missing s3Key')
+        return _error(400, 'Missing s3Key', job_id)
 
     start = time.time()
 
@@ -88,11 +91,11 @@ def handler(event: dict, _context: Any) -> dict:
         obj = s3_client.get_object(Bucket=UPLOAD_BUCKET, Key=s3_key)
         file_bytes = obj['Body'].read()
     except ClientError as e:
-        return _error(502, f'S3 download failed: {e}')
+        return _error(502, f'S3 download failed: {e}', job_id)
 
     content_type = _detect_magic_type(file_bytes, s3_key)
     if not content_type:
-        return _error(400, 'Unsupported or corrupt file content')
+        return _error(400, 'Unsupported or corrupt file content', job_id)
 
     # ── Convert to image data URLs ──────────────────────────────────────────
     if content_type == 'application/pdf':
@@ -102,9 +105,9 @@ def handler(event: dict, _context: Any) -> dict:
         image_data_urls = [url] if url else []
 
     if not image_data_urls:
-        return _error(400, 'Could not extract image data from file')
+        return _error(400, 'Could not extract image data from file', job_id)
 
-    # ── Build vLLM request ──────────────────────────────────────────────────
+    # ── Build LM Studio request ─────────────────────────────────────────────
     content: list[dict] = [
         {'type': 'image_url', 'image_url': {'url': u}} for u in image_data_urls
     ]
@@ -118,10 +121,10 @@ def handler(event: dict, _context: Any) -> dict:
         analysis_text = f'{analysis_text}\n\n{lang_instr}'
     content.append({'type': 'text', 'text': analysis_text})
 
-    # ── Call vLLM ───────────────────────────────────────────────────────────
+    # ── Call LM Studio ──────────────────────────────────────────────────────
     try:
         client, model_name = get_openai_client(timeout=580.0)
-        logger.info('Calling vLLM model=%s job=%s', model_name, job_id)
+        logger.info('Calling LM Studio model=%s job=%s', model_name, job_id)
 
         response = client.chat.completions.create(
             model=model_name,
@@ -133,8 +136,8 @@ def handler(event: dict, _context: Any) -> dict:
             temperature=0.6,
         )
     except Exception as e:
-        logger.error('vLLM inference failed job=%s: %s\n%s', job_id, e, traceback.format_exc())
-        return _error(502, f'vLLM inference failed: {e}')
+        logger.error('LM Studio inference failed job=%s: %s\n%s', job_id, e, traceback.format_exc())
+        return _error(502, f'LM Studio inference failed: {e}', job_id)
 
     elapsed_ms = int((time.time() - start) * 1000)
     raw_content   = response.choices[0].message.content or ''
@@ -152,7 +155,7 @@ def handler(event: dict, _context: Any) -> dict:
         'finish_reason':           finish_reason,
         'mode':                    'fast',
         'model':                   model_name,
-        'provider':                'vLLM (desktop RTX 5090)',
+        'provider':                'LM Studio (desktop RTX 5090)',
         'filename':                filename,
     }
 
@@ -168,6 +171,22 @@ def handler(event: dict, _context: Any) -> dict:
         body['resultS3Key'] = result_key
     except Exception as e:
         logger.warning('Could not save result to S3: %s', e)
+
+    # ── Write COMPLETED to DynamoDB so /api/status/{jobId} resolves ──────────
+    if JOBS_TABLE_NAME and job_id != 'unknown':
+        try:
+            dynamodb.Table(JOBS_TABLE_NAME).update_item(
+                Key={'jobId': job_id},
+                UpdateExpression='SET #s = :s, completedAt = :ca, #r = :r',
+                ExpressionAttributeNames={'#s': 'status', '#r': 'result'},
+                ExpressionAttributeValues={
+                    ':s': 'COMPLETED',
+                    ':ca': datetime.now(timezone.utc).isoformat(),
+                    ':r': body,
+                },
+            )
+        except Exception as e:
+            logger.warning('Could not update DynamoDB with result: %s', e)
 
     return {'statusCode': 200, 'headers': HEADERS, 'body': json.dumps(body, ensure_ascii=False)}
 
@@ -236,7 +255,21 @@ def _parse_model_response(text: str) -> dict:
         }
 
 
-def _error(status: int, message: str) -> dict:
+def _error(status: int, message: str, job_id: str = 'unknown') -> dict:
+    if JOBS_TABLE_NAME and job_id != 'unknown':
+        try:
+            dynamodb.Table(JOBS_TABLE_NAME).update_item(
+                Key={'jobId': job_id},
+                UpdateExpression='SET #s = :s, completedAt = :ca, #e = :e',
+                ExpressionAttributeNames={'#s': 'status', '#e': 'error'},
+                ExpressionAttributeValues={
+                    ':s': 'FAILED',
+                    ':ca': datetime.now(timezone.utc).isoformat(),
+                    ':e': message,
+                },
+            )
+        except Exception:
+            pass
     return {
         'statusCode': status,
         'headers': HEADERS,

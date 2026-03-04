@@ -1,7 +1,7 @@
 # Desktop Worker Setup
 
 Two pieces are needed:
-1. **Tailscale Funnel** — exposes your local vLLM to AWS Lambdas (HTTPS, no open router ports)
+1. **Tailscale Funnel** — exposes your local LM Studio to AWS Lambdas (HTTPS, no open router ports)
 2. **Worker process** — long-polls SQS and runs inference locally
 
 ---
@@ -15,8 +15,8 @@ Install and authenticate Tailscale on the desktop, then enable Funnel for port 8
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 
-# Expose vLLM publicly via Tailscale Funnel (HTTPS → localhost:8000)
-sudo tailscale funnel 8000
+# Expose LM Studio publicly via Tailscale Funnel (HTTPS → localhost:1234)
+sudo tailscale funnel 1234
 ```
 
 Your public Funnel URL will be something like:
@@ -31,21 +31,15 @@ tailscale funnel status
 
 ---
 
-## 2. vLLM
+## 2. LM Studio
 
-```bash
-pip install vllm
+Download from [lmstudio.ai](https://lmstudio.ai), load the model, then start the local server:
 
-# Serve the model (adjust --tensor-parallel-size for your GPU count)
-vllm serve Qwen/Qwen3.5-35B-A3B-AWQ \
-  --api-key coldbones \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --max-model-len 8192 \
-  --tensor-parallel-size 1
-```
+- **Model**: `qwen/qwen3.5-35b-a3b` (or whatever is loaded)
+- **Port**: `1234` (LM Studio default)
+- Enable the server from the "Local Server" tab
 
-Verify: `curl http://localhost:8000/health` should return `{"status":"ok"}`.
+Verify: `curl http://localhost:1234/v1/models` should return a JSON list with the loaded model.
 
 ---
 
@@ -65,7 +59,7 @@ aws ssm put-parameter \
 
 aws ssm put-parameter \
   --name "/coldbones/desktop-port" \
-  --value "8000" \
+  --value "443" \
   --type String \
   --overwrite
 ```
@@ -158,8 +152,8 @@ The service auto-restarts on failure and starts on boot.
 ## Verify End-to-End
 
 1. Desktop: `tailscale funnel status` → Funnel URL shown
-2. Desktop: `curl http://localhost:8000/health` → `{"status":"ok"}`
-3. Mac: `curl https://<your-funnel-url>/health` → `{"status":"ok"}`
+2. Desktop: `curl http://localhost:1234/v1/models` → JSON list with loaded model
+3. Mac: `curl https://<your-funnel-url>/v1/models` → same JSON
 4. AWS: `aws ssm get-parameter --name /coldbones/desktop-url` → your Funnel URL
 5. Upload a photo via the web app with mode=fast
 6. If desktop is on → result in a few seconds
@@ -170,6 +164,6 @@ The service auto-restarts on failure and starts on boot.
 ## Windows notes
 
 If the desktop runs Windows:
-- Run the worker in WSL2 (Ubuntu) — Tailscale + vLLM both work there
+- Run the worker in WSL2 (Ubuntu) — Tailscale + the worker both work there
 - Or use Task Scheduler / NSSM instead of systemd for the service
-- Tailscale Funnel works identically on Windows: `tailscale funnel 8000`
+- Tailscale Funnel works identically on Windows: `tailscale funnel 1234`

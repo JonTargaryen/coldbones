@@ -80,7 +80,7 @@ export default function App() {
   }, [files, selectedFileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
-  const isReady = health?.model_loaded === true;
+  const isReady = health?.status === 'ok';
   const isUploading = selectedFile?.status === 'uploading';
   const isAnalyzing = selectedFile?.status === 'analyzing';
   const isBusy = isUploading || isAnalyzing;

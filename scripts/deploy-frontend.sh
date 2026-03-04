@@ -32,7 +32,7 @@ else
   fi
 fi
 
-CF_DIST_ID=$(jq -r '.ColdbonesStorage.CloudFrontDistributionId // empty' "$CDK_OUTPUTS" 2>/dev/null || true)
+CF_DIST_ID=$(jq -r '.ColdbonesStorage.DistributionId // .ColdbonesStorage.CloudFrontDistributionId // empty' "$CDK_OUTPUTS" 2>/dev/null || true)
 
 echo "→ Bucket:          $BUCKET"
 echo "→ CloudFront dist: ${CF_DIST_ID:-not found (manual invalidation needed)}"
@@ -44,8 +44,15 @@ if [ ! -d "node_modules" ]; then
   npm ci
 fi
 
+# Resolve API URL from CDK outputs or fall back to the known deployed URL
+API_URL=$(jq -r '.ColdbonesApi.ApiUrl // empty' "$CDK_OUTPUTS" 2>/dev/null | sed 's:/$::' || true)
+if [ -z "$API_URL" ]; then
+  API_URL="https://la0cszeq83.execute-api.us-east-1.amazonaws.com/v1"
+fi
+echo "→ API URL: $API_URL"
+
 echo "→ Building production bundle…"
-npm run build
+VITE_API_BASE_URL="$API_URL" npm run build
 
 # Sync to S3
 echo "→ Uploading to s3://$BUCKET …"

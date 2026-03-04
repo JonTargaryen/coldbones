@@ -205,7 +205,7 @@ export class ApiStack extends cdk.Stack {
           'application/json': JSON.stringify({
             status:       'ok',
             model:        modelName,
-            provider:     'vLLM (desktop RTX 5090 via Tailscale)',
+            provider:     'LM Studio (desktop RTX 5090 via Tailscale)',
           }),
         },
       }],

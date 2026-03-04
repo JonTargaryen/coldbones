@@ -3,6 +3,9 @@ import type { UploadedFile, AnalysisResult, ApiAnalysisResult } from '../types';
 
 const API = import.meta.env.VITE_API_BASE_URL ?? '';
 
+const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS  = 10 * 60 * 1000; // 10 min
+
 /** Normalize the sentinel string the Lambda puts in extracted_text when no text is found. */
 const NO_TEXT_SENTINEL = 'No text detected.';
 
@@ -52,7 +55,17 @@ export function useAnalysis(
 
       const data = await res.json();
       // API Gateway wraps Lambda response — unwrap body if needed
-      const raw: ApiAnalysisResult = data.body ? JSON.parse(data.body) : data;
+      const raw: ApiAnalysisResult & { jobId?: string; status?: string } =
+        data.body ? JSON.parse(data.body) : data;
+
+      // 202 → orchestrator is running async; poll /api/status/{jobId}
+      if (res.status === 202 || raw.status === 'processing' || raw.status === 'queued') {
+        if (!raw.jobId) throw new Error('Server returned 202 but no jobId');
+        await _pollForResult(raw.jobId, update);
+        return;
+      }
+
+      // Synchronous result (legacy / short inference)
       update({ status: 'complete', result: mapResult(raw) });
     } catch (err) {
       update({
@@ -63,4 +76,42 @@ export function useAnalysis(
   }, [setFiles]);
 
   return { analyze };
+}
+
+/** Poll /api/status/{jobId} until COMPLETED or FAILED (or timeout). */
+async function _pollForResult(
+  jobId: string,
+  update: (patch: Partial<UploadedFile>) => void,
+): Promise<void> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  return new Promise((resolve) => {
+    const timer = setInterval(async () => {
+      if (Date.now() > deadline) {
+        clearInterval(timer);
+        update({ status: 'error', error: 'Analysis timed out after 10 minutes' });
+        resolve();
+        return;
+      }
+      try {
+        const res = await fetch(`${API}/api/status/${jobId}`);
+        const data = await res.json();
+        const body = data.body ? JSON.parse(data.body) : data;
+        const jobStatus: string = (body.status ?? '').toUpperCase();
+
+        if (jobStatus === 'COMPLETED') {
+          clearInterval(timer);
+          const raw: ApiAnalysisResult = body.result ?? body;
+          update({ status: 'complete', result: mapResult(raw) });
+          resolve();
+        } else if (jobStatus === 'FAILED') {
+          clearInterval(timer);
+          update({ status: 'error', error: body.error ?? 'Analysis failed on server' });
+          resolve();
+        }
+        // PROCESSING / QUEUED → keep polling
+      } catch {
+        // transient network error — keep polling
+      }
+    }, POLL_INTERVAL_MS);
+  });
 }
