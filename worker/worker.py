@@ -109,13 +109,29 @@ def get_vllm_client() -> OpenAI:
 
 
 def check_vllm_health() -> bool:
-    """Return True if the local vLLM /health endpoint is up."""
+    """Return True if the inference endpoint is reachable.
+
+    Supports both vLLM (/health) and OpenAI-compatible servers like
+    LM Studio (/v1/models).
+    """
     import urllib.request
-    try:
-        with urllib.request.urlopen(f'{VLLM_URL.rstrip("/")}/health', timeout=5) as r:
-            return r.status == 200
-    except Exception:
-        return False
+    import urllib.error
+
+    base = VLLM_URL.rstrip('/')
+    checks = [f'{base}/health', f'{base}/v1/models']
+
+    for url in checks:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                if r.status == 200:
+                    return True
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                continue
+        except Exception:
+            continue
+
+    return False
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
