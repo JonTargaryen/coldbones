@@ -10,6 +10,8 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as eventsources from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as path from 'path';
+import * as fs from 'fs';
+import { execSync } from 'child_process';
 
 export interface ApiStackProps extends cdk.StackProps {
   uploadBucket: s3.IBucket;
@@ -70,11 +72,49 @@ export class ApiStack extends cdk.Stack {
     // resource adds the function ARN to the role's policy, but the function
     // already depends on that role).  Retention is managed via explicit LogGroup
     // resources below instead.
-    const fn = (id: string, dir: string, extra?: Partial<lambda.FunctionProps>) =>
-      new lambda.Function(this, id, {
+    /** Build Lambda code asset, bundling pip requirements when present. */
+    const fn = (id: string, dir: string, extra?: Partial<lambda.FunctionProps>) => {
+      const dirPath = path.join(lambdaRoot, dir);
+      const reqFile = path.join(dirPath, 'requirements.txt');
+      const hasDeps = fs.existsSync(reqFile);
+
+      const code = hasDeps
+        ? lambda.Code.fromAsset(dirPath, {
+            assetHashType: cdk.AssetHashType.OUTPUT,
+            bundling: {
+              // Docker fallback (CI / clean environments)
+              image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+              command: [
+                'bash', '-c',
+                'pip install -r requirements.txt -t /asset-output --quiet && cp -au . /asset-output',
+              ],
+              // Local bundling: install Linux-compatible wheels using pip --platform
+              // so the bundle works on Lambda x86_64 without requiring Docker.
+              local: {
+                tryBundle(outputDir: string): boolean {
+                  try {
+                    execSync(
+                      `pip3 install -r "${reqFile}" -t "${outputDir}"` +
+                      ` --platform manylinux2014_x86_64` +
+                      ` --only-binary :all:` +
+                      ` --implementation cp --python-version 312 --quiet`,
+                      { stdio: 'inherit' },
+                    );
+                    execSync(`cp -r "${dirPath}/." "${outputDir}"`);
+                    return true;
+                  } catch {
+                    return false;
+                  }
+                },
+              },
+            },
+          })
+        : lambda.Code.fromAsset(dirPath);
+
+      return new lambda.Function(this, id, {
         runtime: lambda.Runtime.PYTHON_3_12,
         handler: 'handler.handler',
-        code: lambda.Code.fromAsset(path.join(lambdaRoot, dir)),
+        code,
         timeout: cdk.Duration.minutes(5),
         memorySize: 512,
         environment: { ...sharedEnv },
@@ -82,6 +122,7 @@ export class ApiStack extends cdk.Stack {
         tracing: lambda.Tracing.ACTIVE,
         ...extra,
       });
+    };
 
     // ─── Lambda Functions ──────────────────────────────────────────────────
 
@@ -105,7 +146,7 @@ export class ApiStack extends cdk.Stack {
       actions: ['lambda:InvokeFunction'],
       resources: [`arn:aws:lambda:${this.region}:${this.account}:function:*`],
     }));
-    analyzeRouterFn.addEnvironment('ORCHESTRATOR_FUNCTION', analyzeOrchestratorFn.functionName);
+    analyzeRouterFn.addEnvironment('ORCHESTRATOR_FUNCTION_ARN', analyzeOrchestratorFn.functionArn);
 
     const batchProcessorFn = fn('BatchProcessorFn', 'batch_processor', {
       timeout: cdk.Duration.minutes(10),

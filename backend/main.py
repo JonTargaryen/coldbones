@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 ColdBones local development backend
 FastAPI server that calls LM Studio on Seratonin via the OpenAI-compatible API.
@@ -20,14 +22,16 @@ import logging
 import os
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI, APIConnectionError
 from PIL import Image
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -92,6 +96,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ColdBones API", version="3.0.0", lifespan=lifespan)
 
+# ── Local dev upload store (in-memory) ────────────────────────────────────────
+# Maps s3Key → raw bytes so the presign → upload → analyze flow works locally
+# without real AWS credentials.
+_local_store: dict[str, bytes] = {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:4173", "*"],
@@ -99,6 +108,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class PresignRequest(BaseModel):
+    filename: str
+    contentType: str = ""
+
+
+@app.post("/api/presign")
+async def presign(req: PresignRequest):
+    """Local-dev shim for the presign Lambda.  Returns a localhost PUT URL and
+    a synthetic s3Key that the /api/analyze endpoint resolves from _local_store."""
+    token = str(uuid.uuid4())
+    safe_name = req.filename.replace("/", "_")
+    s3_key = f"local/{token}/{safe_name}"
+    upload_url = f"/api/localupload/{token}/{safe_name}"
+    job_id = str(uuid.uuid4())
+    return {"uploadUrl": upload_url, "s3Key": s3_key, "jobId": job_id}
+
+
+@app.put("/api/localupload/{token}/{filename:path}")
+async def local_upload(token: str, filename: str, request: Request):
+    """Receives the raw XHR PUT from the frontend and stores it in memory."""
+    body = await request.body()
+    s3_key = f"local/{token}/{filename}"
+    _local_store[s3_key] = body
+    return {"ok": True}
 
 
 @app.get("/api/health")
@@ -131,19 +166,44 @@ async def health():
 
 
 @app.post("/api/analyze")
-async def analyze(
-    file: UploadFile = File(...),
-    lang: str = Form(default="en"),
-    mode: str = Form(default="fast"),
-):
+async def analyze(request: Request):
+    """Accepts two call styles:
+    1. multipart/form-data  — file + lang + mode  (used by local drag-drop)
+    2. application/json     — {s3Key, filename, lang, mode}  (used by AWS flow
+       after uploading to S3 / localupload)
+    """
     if lm_client is None:
         raise HTTPException(503, "LM Studio client not initialised — check server logs")
 
-    content_type = (file.content_type or "").lower()
-    if content_type not in ACCEPTED_CONTENT_TYPES:
-        raise HTTPException(400, f"Unsupported file type: {content_type}")
+    ct = request.headers.get("content-type", "")
 
-    raw_bytes = await file.read()
+    if "application/json" in ct:
+        body = await request.json()
+        s3_key: str = body.get("s3Key", "")
+        lang: str = body.get("lang", "en")
+        mode: str = body.get("mode", "fast")
+        if s3_key not in _local_store:
+            raise HTTPException(404, f"No local upload found for s3Key: {s3_key!r}; upload the file first via POST /api/presign then PUT to uploadUrl")
+        raw_bytes = _local_store.pop(s3_key)
+        # Guess content type from filename suffix
+        suffix = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
+        _ct_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                   "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp",
+                   "tiff": "image/tiff", "tif": "image/tiff", "pdf": "application/pdf"}
+        content_type = _ct_map.get(suffix, "image/jpeg")
+    else:
+        # Multipart form-data (original behaviour)
+        form = await request.form()
+        file_field = form.get("file")
+        if file_field is None:
+            raise HTTPException(400, "Missing 'file' field in multipart form")
+        lang = str(form.get("lang") or "en")
+        mode = str(form.get("mode") or "fast")
+        content_type = (getattr(file_field, "content_type", "") or "").lower()
+        if content_type not in ACCEPTED_CONTENT_TYPES:
+            raise HTTPException(400, f"Unsupported file type: {content_type}")
+        raw_bytes = await file_field.read()
+
     detected = _detect_type(raw_bytes, content_type)
 
     start = time.time()

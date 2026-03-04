@@ -20,6 +20,7 @@ DynamoDB item schema:
 
 import json
 import os
+from decimal import Decimal
 from typing import Any
 
 import boto3
@@ -62,12 +63,20 @@ def handler(event: dict, _context: Any) -> dict:
 
     return {
         "statusCode": 200,
-        "body": json.dumps(out, default=str),
+        "body": json.dumps(out, default=_json_default),
         "headers": {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
         },
     }
+
+
+def _json_default(obj: Any) -> Any:
+    """Handle types not natively serializable by json.dumps.
+    DynamoDB boto3 resource returns Decimal for Number attributes."""
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    return str(obj)
 
 
 def _error(status: int, msg: str) -> dict:

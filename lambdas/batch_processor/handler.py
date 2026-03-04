@@ -50,6 +50,18 @@ client = OpenAI(
     timeout=300.0,
 )
 
+# Cache model name at cold-start to avoid an extra round-trip on every invocation.
+def _init_model_name() -> str:
+    try:
+        models = client.models.list()
+        if models.data:
+            return models.data[0].id
+    except Exception:
+        pass
+    return "qwen3.5"
+
+MODEL_NAME: str = _init_model_name()
+
 SYSTEM_PROMPT = """You are a precise visual analyst. Examine the provided image carefully and respond with a JSON object (no markdown fences) matching this exact schema:
 
 {
@@ -141,7 +153,7 @@ def _process(s3_key: str, lang: str) -> dict:
         analysis_text = f"{analysis_text}\n\n{lang_instr}"
     content.append({"type": "text", "text": analysis_text})
 
-    model_name = _detect_model()
+    model_name = MODEL_NAME
     start = time.time()
     response = client.chat.completions.create(
         model=model_name,
@@ -209,16 +221,6 @@ def _pdf_to_data_urls(pdf_bytes: bytes) -> list[str]:
     except Exception as e:
         print(f"PDF conversion error: {e}")
         return []
-
-
-def _detect_model() -> str:
-    try:
-        models = client.models.list()
-        if models.data:
-            return models.data[0].id
-    except Exception:
-        pass
-    return "qwen3.5"
 
 
 def _parse(text: str) -> dict:

@@ -43,6 +43,18 @@ client = OpenAI(
     timeout=55.0,
 )
 
+# Cache model name at cold-start to avoid an extra round-trip on every invocation.
+def _resolve_model() -> str:
+    try:
+        models = client.models.list()
+        if models.data:
+            return models.data[0].id
+    except Exception:
+        pass
+    return "qwen3.5"
+
+MODEL_NAME: str = _resolve_model()
+
 HEADERS = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
@@ -118,8 +130,8 @@ def handler(event: dict, _context: Any) -> dict:
         analysis_text = f"{analysis_text}\n\n{lang_instruction}"
     content.append({"type": "text", "text": analysis_text})
 
-    # Detect loaded model name
-    model_name = _detect_model()
+    # Use cached model name (resolved at cold-start)
+    model_name = MODEL_NAME
 
     # Call LM Studio
     try:
@@ -234,17 +246,6 @@ def _pdf_to_data_urls(pdf_bytes: bytes, job_id: str) -> list[str]:
     except Exception as e:
         print(f"PDF conversion error for job {job_id}: {e}")
         return []
-
-
-def _detect_model() -> str:
-    """Return the first model ID advertised by LM Studio, or a fallback."""
-    try:
-        models = client.models.list()
-        if models.data:
-            return models.data[0].id
-    except Exception:
-        pass
-    return "qwen3.5"
 
 
 def _parse_model_response(text: str) -> dict:

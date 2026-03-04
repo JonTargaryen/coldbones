@@ -3,13 +3,17 @@ import type { UploadedFile, AnalysisResult, ApiAnalysisResult } from '../types';
 
 const API = import.meta.env.VITE_API_BASE_URL ?? '';
 
+/** Normalize the sentinel string the Lambda puts in extracted_text when no text is found. */
+const NO_TEXT_SENTINEL = 'No text detected.';
+
 /** Convert snake_case API response to camelCase AnalysisResult */
 function mapResult(raw: ApiAnalysisResult): AnalysisResult {
+  const extractedText = raw.extracted_text ?? '';
   return {
     summary: raw.summary ?? '',
     keyObservations: raw.key_observations ?? [],
     contentClassification: raw.content_classification ?? '',
-    extractedText: raw.extracted_text ?? '',
+    extractedText: extractedText === NO_TEXT_SENTINEL ? '' : extractedText,
     reasoning: raw.reasoning ?? '',
     reasoningTokenCount: raw.reasoning_token_count ?? 0,
     finishReason: raw.finish_reason ?? 'stop',

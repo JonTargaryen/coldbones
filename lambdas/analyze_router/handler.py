@@ -14,6 +14,7 @@ Event (API Gateway proxy event):
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3
@@ -21,9 +22,11 @@ from botocore.exceptions import ClientError
 
 lambda_client = boto3.client("lambda")
 sqs_client = boto3.client("sqs")
+dynamodb = boto3.resource("dynamodb")
 
 ORCHESTRATOR_FUNCTION_ARN = os.environ.get("ORCHESTRATOR_FUNCTION_ARN", "")
 ANALYZE_QUEUE_URL = os.environ.get("ANALYZE_QUEUE_URL", "")
+JOBS_TABLE = os.environ.get("JOBS_TABLE", "")
 
 
 def handler(event: dict, _context: Any) -> dict:
@@ -76,6 +79,27 @@ def _invoke_sync(payload: dict) -> dict:
 def _enqueue(payload: dict) -> dict:
     if not ANALYZE_QUEUE_URL:
         return _error(500, "ANALYZE_QUEUE_URL not configured")
+
+    job_id = payload["jobId"]
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Write initial QUEUED record so the status poller doesn't get 404s
+    # while the SQS message is in-flight to batch_processor.
+    if JOBS_TABLE:
+        try:
+            table = dynamodb.Table(JOBS_TABLE)
+            table.put_item(Item={
+                "jobId": job_id,
+                "status": "QUEUED",
+                "createdAt": now,
+                "s3Key": payload.get("s3Key", ""),
+                "filename": payload.get("filename", ""),
+                "lang": payload.get("lang", "en"),
+                "ttl": int(datetime.now(timezone.utc).timestamp()) + 86400,
+            })
+        except Exception as e:
+            print(f"[analyze_router] DynamoDB write failed (non-fatal): {e}")
+
     try:
         sqs_client.send_message(
             QueueUrl=ANALYZE_QUEUE_URL,
@@ -84,7 +108,7 @@ def _enqueue(payload: dict) -> dict:
         return {
             "statusCode": 202,
             "body": json.dumps({
-                "jobId": payload["jobId"],
+                "jobId": job_id,
                 "status": "queued",
                 "message": "Job queued for processing. Poll /api/status/{jobId} for results.",
             }),

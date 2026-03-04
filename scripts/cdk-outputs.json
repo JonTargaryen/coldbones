@@ -1,0 +1,27 @@
+{
+  "ColdbonesStorage": {
+    "AppUrl": "https://app.omlahiri.com",
+    "SiteBucketName": "coldbonesstorage-sitebucket397a1860-e9yav6un8lx3",
+    "DistributionId": "E23WL91MGAUYG5",
+    "JobsTableName": "coldbones-jobs",
+    "ExportsOutputRefUploadBucketD2C1DA787A985C32": "coldbonesstorage-uploadbucketd2c1da78-fur6ihkdgpdw",
+    "HostedZoneNameServers": "ns-89.awsdns-11.com, ns-747.awsdns-29.net, ns-1669.awsdns-16.co.uk, ns-1388.awsdns-45.org",
+    "CloudFrontDomain": "d19byojf17iqgx.cloudfront.net",
+    "ExportsOutputFnGetAttJobsTable1970BC16ArnC40C1624": "arn:aws:dynamodb:us-east-1:253490765557:table/coldbones-jobs",
+    "ExportsOutputRefJobsTable1970BC16EDB4A824": "coldbones-jobs",
+    "UploadBucketName": "coldbonesstorage-uploadbucketd2c1da78-fur6ihkdgpdw",
+    "ExportsOutputFnGetAttUploadBucketD2C1DA78ArnB45F3CD6": "arn:aws:s3:::coldbonesstorage-uploadbucketd2c1da78-fur6ihkdgpdw"
+  },
+  "ColdbonesQueue": {
+    "ExportsOutputRefAnalysisQueue251119DF5F9C404C": "https://sqs.us-east-1.amazonaws.com/253490765557/coldbones-analysis",
+    "ExportsOutputFnGetAttAnalysisQueue251119DFArn84F30333": "arn:aws:sqs:us-east-1:253490765557:coldbones-analysis",
+    "TopicArn": "arn:aws:sns:us-east-1:253490765557:coldbones-notifications",
+    "ExportsOutputRefNotificationTopicEB7A0DF194E944DD": "arn:aws:sns:us-east-1:253490765557:coldbones-notifications",
+    "QueueUrl": "https://sqs.us-east-1.amazonaws.com/253490765557/coldbones-analysis"
+  },
+  "ColdbonesApi": {
+    "ApiUrl": "https://x69lwb07n3.execute-api.us-east-1.amazonaws.com/v1/",
+    "LmStudioUrl": "https://seratonin.tail40ae2c.ts.net",
+    "RestApiEndpoint0551178A": "https://x69lwb07n3.execute-api.us-east-1.amazonaws.com/v1/"
+  }
+}
