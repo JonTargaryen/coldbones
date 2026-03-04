@@ -193,7 +193,7 @@ coldbones/
 | Variable | Default | Description |
 |---|---|---|
 | `LM_STUDIO_URL` | `http://localhost:1234` | LM Studio base URL (Tailscale Funnel for remote) |
-| `LM_STUDIO_API_KEY` | `lm-studio` | API key (LM Studio ignores value, must be non-empty) |
+| `LM_STUDIO_API_KEY` | *(required)* | LM Studio API key — LM Studio → Developer → API Keys |
 | `MODEL_NAME` | `qwen/qwen3.5-35b-a3b` | Model identifier |
 | `MAX_INFERENCE_TOKENS` | `8192` | Max tokens per response |
 | `MAX_PDF_PAGES` | `20` | Max PDF pages to render and send |
@@ -206,6 +206,7 @@ coldbones/
 | `UPLOAD_BUCKET` | ✓ | S3 bucket name for uploads |
 | `JOBS_TABLE` | ✓ | DynamoDB table name |
 | `LM_STUDIO_URL` | ✓ | LM Studio base URL (usually `http://localhost:1234`) |
+| `LM_STUDIO_API_KEY` | ✓ | LM Studio API key — LM Studio → Developer → API Keys |
 | `MODEL_NAME` | | Defaults to `Qwen/Qwen3.5-35B-A3B-AWQ` |
 
 ### Lambda environment (set via CDK / cdk.json)
@@ -218,6 +219,7 @@ coldbones/
 | `ANALYZE_QUEUE_URL` | SQS queue URL |
 | `/coldbones/desktop-url` *(SSM)* | Tailscale Funnel URL for LM Studio |
 | `/coldbones/desktop-port` *(SSM)* | LM Studio port (443 via Funnel) |
+| `/coldbones/desktop-apikey` *(SSM, SecureString)* | LM Studio API key (Bearer token) |
 
 ---
 
