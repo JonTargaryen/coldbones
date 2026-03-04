@@ -10,16 +10,22 @@
     "diff": "cdk diff --all",
     "synth": "cdk synth --all",
     "destroy": "cdk destroy --all",
-    "lint": "eslint . --ext .ts"
+    "lint": "eslint . --ext .ts",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "test:ci": "jest --coverage --ci --forceExit"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.170.0",
     "constructs": "^10.4.2"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.19.13",
     "aws-cdk": "^2.170.0",
+    "jest": "^30.2.0",
     "source-map-support": "^0.5.21",
+    "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "typescript": "~5.7.2"
   }
