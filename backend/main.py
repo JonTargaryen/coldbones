@@ -22,8 +22,8 @@ from PIL import Image
 
 load_dotenv()
 
-LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
-LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "")
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "https://seratonin.tail40ae2c.ts.net/v1")
+LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen/qwen3.5-35b-a3b")
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 20 * 1024 * 1024))
 
 app = FastAPI(title="Coldbones API", version="0.1.0")
@@ -37,7 +37,7 @@ app.add_middleware(
 )
 
 # LM Studio client (OpenAI-compatible)
-client = OpenAI(base_url=LM_STUDIO_URL, api_key="lm-studio")
+client = OpenAI(base_url=LM_STUDIO_URL, api_key="lm-studio", timeout=290.0)
 
 # Qwen3.5 is a thinking model — it produces reasoning in `reasoning_content`
 # and the final answer in `content`. We give it generous max_tokens so it can

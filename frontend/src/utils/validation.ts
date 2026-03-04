@@ -92,6 +92,14 @@ export function validateBatch(files: File[], mode: 'fast' | 'slow'): ValidationE
   return errors;
 }
 
+export function validateBatchSize(count: number, mode: 'fast' | 'slow'): string | null {
+  const maxBatch = mode === 'fast' ? MAX_BATCH_SIZE_FAST : MAX_BATCH_SIZE_SLOW;
+  if (count > maxBatch) {
+    return `Maximum ${maxBatch} files per batch in ${mode} mode.`;
+  }
+  return null;
+}
+
 export const ACCEPT_MAP: Record<string, string[]> = {
   'image/jpeg': ['.jpg', '.jpeg'],
   'image/png': ['.png'],

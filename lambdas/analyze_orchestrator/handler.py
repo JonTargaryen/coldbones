@@ -81,6 +81,19 @@ def handler(event: dict, _context: Any) -> dict:
     except ClientError as e:
         return _error(502, f"Failed to download file from S3: {e}")
 
+    detected_type = _detect_magic_type(file_bytes)
+    if not detected_type:
+        return _error(400, "Unsupported or corrupt file content")
+
+    expects_pdf = content_type == "application/pdf" or s3_key.lower().endswith(".pdf")
+    if expects_pdf and detected_type != "application/pdf":
+        return _error(400, "File content does not match PDF type")
+    if not expects_pdf and not detected_type.startswith("image/"):
+        return _error(400, "File content is not a valid image")
+
+    # Prefer detected type over metadata/extension for safety
+    content_type = detected_type
+
     # Build image data URLs
     image_data_urls: list[str] = []
 
@@ -180,6 +193,27 @@ def _guess_type(key: str) -> str:
         "tiff": "image/tiff", "tif": "image/tiff",
         "pdf": "application/pdf",
     }.get(ext, "application/octet-stream")
+
+
+def _detect_magic_type(raw_bytes: bytes) -> str:
+    if len(raw_bytes) < 12:
+        return ""
+
+    if raw_bytes.startswith(b"%PDF-"):
+        return "application/pdf"
+    if raw_bytes.startswith(b"\xFF\xD8\xFF"):
+        return "image/jpeg"
+    if raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw_bytes.startswith(b"GIF87a") or raw_bytes.startswith(b"GIF89a"):
+        return "image/gif"
+    if raw_bytes.startswith(b"BM"):
+        return "image/bmp"
+    if raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if raw_bytes.startswith((b"II*\x00", b"MM\x00*")):
+        return "image/tiff"
+    return ""
 
 
 def _image_to_data_url(raw_bytes: bytes, mime_type: str) -> str | None:

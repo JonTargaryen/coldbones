@@ -46,6 +46,9 @@ def handler(event: dict, _context: Any) -> dict:
     except ClientError as e:
         raise RuntimeError(f"Failed to download PDF from S3: {e}") from e
 
+    if not _is_valid_pdf(pdf_bytes):
+        raise ValueError("Uploaded file is not a valid PDF (signature mismatch or corruption)")
+
     # Convert using pdf2image (backed by Poppler)
     try:
         from pdf2image import convert_from_bytes
@@ -79,3 +82,9 @@ def handler(event: dict, _context: Any) -> dict:
         "totalPages": len(images),
         "truncated": len(images) > max_pages,
     }
+
+
+def _is_valid_pdf(raw_bytes: bytes) -> bool:
+    if len(raw_bytes) < 8:
+        return False
+    return raw_bytes.startswith(b"%PDF-")

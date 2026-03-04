@@ -79,10 +79,15 @@ def handler(event: dict, _context: Any) -> dict:
     2. Step Functions task (explicit batch processing)
     """
     records = event.get("Records") or []
+    from_state_machine = bool(event.get("fromStateMachine"))
 
     if records:
         # Direct SQS trigger — process the records we received
         processed, failed = _process_records(records)
+    elif from_state_machine and event.get("jobId") and event.get("s3Key"):
+        # Step Functions direct single-job invocation
+        ok = _process_job_payload(event)
+        processed, failed = (1, 0) if ok else (0, 1)
     else:
         # Step Functions / manual batch — pull from queue ourselves
         processed, failed = _pull_and_process()
@@ -147,12 +152,27 @@ def _process_single_message(msg: dict) -> bool:
     job_id = body.get("jobId", str(uuid.uuid4()))
     s3_key = body.get("s3Key", "")
     lang = body.get("lang", "en")
+    filename = body.get("filename", "")
+
+    return _process_job(job_id, s3_key, lang, filename)
+
+
+def _process_job_payload(payload: dict) -> bool:
+    job_id = payload.get("jobId", str(uuid.uuid4()))
+    s3_key = payload.get("s3Key", "")
+    lang = payload.get("lang", "en")
+    filename = payload.get("filename", "")
+    return _process_job(job_id, s3_key, lang, filename)
+
+
+def _process_job(job_id: str, s3_key: str, lang: str, filename: str) -> bool:
+    """Process one logical job payload. Returns True on success."""
 
     if not s3_key:
         print(f"ERROR: Missing s3Key in job {job_id}")
         return False
 
-    print(f"INFO: Processing job {job_id} (s3Key={s3_key}, lang={lang})")
+    print(f"INFO: Processing job {job_id} (s3Key={s3_key}, lang={lang}, filename={filename})")
 
     # Mark as processing
     _update_job_status(job_id, "processing")
@@ -204,7 +224,20 @@ def _download_file(s3_key: str) -> tuple[bytes, str]:
 
 
 def _prepare_images(raw_bytes: bytes, content_type: str, s3_key: str, job_id: str) -> list[str]:
-    if content_type == "application/pdf" or s3_key.lower().endswith(".pdf"):
+    detected_type = _detect_magic_type(raw_bytes)
+    if not detected_type:
+        print(f"ERROR: Unsupported/corrupt file for job {job_id}")
+        return []
+
+    expects_pdf = content_type == "application/pdf" or s3_key.lower().endswith(".pdf")
+    if expects_pdf and detected_type != "application/pdf":
+        print(f"ERROR: File signature mismatch (expected PDF) for job {job_id}")
+        return []
+    if not expects_pdf and not detected_type.startswith("image/"):
+        print(f"ERROR: File signature mismatch (expected image) for job {job_id}")
+        return []
+
+    if detected_type == "application/pdf":
         return _pdf_to_data_urls(raw_bytes, job_id)
     data_url = _image_to_data_url(raw_bytes)
     return [data_url] if data_url else []
@@ -320,6 +353,27 @@ def _guess_type(key: str) -> str:
         "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp",
         "tiff": "image/tiff", "tif": "image/tiff", "pdf": "application/pdf",
     }.get(ext, "application/octet-stream")
+
+
+def _detect_magic_type(raw_bytes: bytes) -> str:
+    if len(raw_bytes) < 12:
+        return ""
+
+    if raw_bytes.startswith(b"%PDF-"):
+        return "application/pdf"
+    if raw_bytes.startswith(b"\xFF\xD8\xFF"):
+        return "image/jpeg"
+    if raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw_bytes.startswith(b"GIF87a") or raw_bytes.startswith(b"GIF89a"):
+        return "image/gif"
+    if raw_bytes.startswith(b"BM"):
+        return "image/bmp"
+    if raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if raw_bytes.startswith((b"II*\x00", b"MM\x00*")):
+        return "image/tiff"
+    return ""
 
 
 def _image_to_data_url(raw_bytes: bytes) -> str | None:

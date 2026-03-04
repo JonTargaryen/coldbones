@@ -30,6 +30,7 @@ import urllib.error
 
 autoscaling = boto3.client("autoscaling")
 ec2 = boto3.client("ec2")
+sqs = boto3.client("sqs")
 
 GPU_PORT = int(os.environ.get("GPU_PORT", 8000))
 HEALTH_CHECK_PATH = os.environ.get("HEALTH_CHECK_PATH", "/health")
@@ -39,6 +40,10 @@ DRAIN_TIMEOUT_S = int(os.environ.get("DRAIN_TIMEOUT_S", 300))
 
 
 def handler(event: dict, _context: Any) -> dict:
+    action = event.get("action", "")
+    if action:
+        return _handle_orchestration_action(event)
+
     detail = event.get("detail", event)  # EventBridge wraps in 'detail'
 
     lifecycle_action_token = detail.get("LifecycleActionToken", "")
@@ -60,6 +65,133 @@ def handler(event: dict, _context: Any) -> dict:
     else:
         print(f"WARNING: Unknown lifecycle transition: {lifecycle_transition}")
         return {"status": "unhandled"}
+
+
+def _handle_orchestration_action(event: dict) -> dict:
+    action = str(event.get("action", "")).upper()
+
+    if action == "DESCRIBE_ASG":
+        asg_name = event.get("asgName", "")
+        desc = _describe_asg(asg_name)
+        return {
+            "action": action,
+            "asgName": asg_name,
+            "desiredCapacity": desc.get("desiredCapacity", 0),
+            "instanceIds": desc.get("instanceIds", []),
+        }
+
+    if action == "SCALE_UP":
+        asg_name = event.get("asgName", "")
+        desired_capacity = int(event.get("desiredCapacity", 1))
+        _ensure_asg_max(asg_name, desired_capacity)
+        autoscaling.set_desired_capacity(
+            AutoScalingGroupName=asg_name,
+            DesiredCapacity=desired_capacity,
+            HonorCooldown=False,
+        )
+        return {
+            "action": action,
+            "asgName": asg_name,
+            "desiredCapacity": desired_capacity,
+            "status": "scaled",
+        }
+
+    if action == "HEALTH_CHECK":
+        asg_name = event.get("asgName", "")
+        healthy = _is_any_instance_healthy(asg_name)
+        return {"action": action, "asgName": asg_name, "healthy": healthy}
+
+    if action == "CHECK_QUEUE_AND_SCALE":
+        asg_name = event.get("asgName", "")
+        queue_url = event.get("queueUrl", "")
+        queue_depth = _queue_depth(queue_url) if queue_url else 0
+
+        if queue_depth <= 0:
+            autoscaling.set_desired_capacity(
+                AutoScalingGroupName=asg_name,
+                DesiredCapacity=0,
+                HonorCooldown=False,
+            )
+            status = "scaled_down"
+        else:
+            status = "kept_warm"
+
+        return {
+            "action": action,
+            "asgName": asg_name,
+            "queueDepth": queue_depth,
+            "status": status,
+        }
+
+    if action == "HANDLE_INTERRUPTION":
+        return {
+            "action": action,
+            "jobId": event.get("jobId", ""),
+            "status": "acknowledged",
+        }
+
+    raise ValueError(f"Unsupported action: {action}")
+
+
+def _describe_asg(asg_name: str) -> dict:
+    response = autoscaling.describe_auto_scaling_groups(
+        AutoScalingGroupNames=[asg_name],
+    )
+    groups = response.get("AutoScalingGroups", [])
+    if not groups:
+        return {"desiredCapacity": 0, "instanceIds": []}
+
+    group = groups[0]
+    return {
+        "desiredCapacity": int(group.get("DesiredCapacity", 0)),
+        "maxSize": int(group.get("MaxSize", 0)),
+        "instanceIds": [
+            instance.get("InstanceId")
+            for instance in group.get("Instances", [])
+            if instance.get("InstanceId")
+        ],
+    }
+
+
+def _ensure_asg_max(asg_name: str, desired_capacity: int) -> None:
+    asg = _describe_asg(asg_name)
+    max_size = int(asg.get("maxSize", 0))
+    if desired_capacity > max_size:
+        autoscaling.update_auto_scaling_group(
+            AutoScalingGroupName=asg_name,
+            MaxSize=desired_capacity,
+        )
+
+
+def _is_any_instance_healthy(asg_name: str) -> bool:
+    asg = _describe_asg(asg_name)
+    instance_ids: list[str] = asg.get("instanceIds", [])
+    if not instance_ids:
+        return False
+
+    response = ec2.describe_instances(InstanceIds=instance_ids)
+    reservations = response.get("Reservations", [])
+    for reservation in reservations:
+        for instance in reservation.get("Instances", []):
+            ip = instance.get("PrivateIpAddress")
+            state = (instance.get("State") or {}).get("Name")
+            if not ip or state != "running":
+                continue
+            health_url = f"http://{ip}:{GPU_PORT}{HEALTH_CHECK_PATH}"
+            if _health_check(health_url):
+                return True
+    return False
+
+
+def _queue_depth(queue_url: str) -> int:
+    response = sqs.get_queue_attributes(
+        QueueUrl=queue_url,
+        AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
+    )
+    attrs = response.get("Attributes", {})
+    visible = int(attrs.get("ApproximateNumberOfMessages", 0))
+    in_flight = int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
+    return visible + in_flight
 
 
 def _handle_launch(

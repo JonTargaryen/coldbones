@@ -31,6 +31,12 @@ interface UseSlowAnalysisReturn {
   jobs: SlowJob[];
   isSubmitting: boolean;
   submitSlowJob: (files: UploadedFile[], lang?: Language) => Promise<void>;
+  applyJobEvent: (event: {
+    jobId: string;
+    status: JobStatus['status'];
+    result?: AnalysisResult;
+    error?: string;
+  }) => void;
   clearJobs: () => void;
 }
 
@@ -42,6 +48,41 @@ export function useSlowAnalysis(): UseSlowAnalysisReturn {
   const updateJob = useCallback((jobId: string, updates: Partial<SlowJob>) => {
     setJobs(prev => prev.map(j => j.jobId === jobId ? { ...j, ...updates } : j));
   }, []);
+
+  const clearPollTimer = useCallback((jobId: string) => {
+    const timer = pollTimersRef.current.get(jobId);
+    if (timer) {
+      clearTimeout(timer);
+      pollTimersRef.current.delete(jobId);
+    }
+  }, []);
+
+  const applyJobEvent = useCallback(
+    (event: {
+      jobId: string;
+      status: JobStatus['status'];
+      result?: AnalysisResult;
+      error?: string;
+    }) => {
+      const updates: Partial<SlowJob> = {
+        status: event.status,
+      };
+
+      if (event.status === 'complete') {
+        updates.result = event.result ?? null;
+        updates.errorMessage = null;
+        clearPollTimer(event.jobId);
+      }
+
+      if (event.status === 'failed') {
+        updates.errorMessage = event.error ?? 'Job failed on the server.';
+        clearPollTimer(event.jobId);
+      }
+
+      updateJob(event.jobId, updates);
+    },
+    [clearPollTimer, updateJob],
+  );
 
   const pollJobStatus = useCallback(
     (jobId: string, attempt = 0) => {
@@ -67,6 +108,7 @@ export function useSlowAnalysis(): UseSlowAnalysisReturn {
               errorMessage: null,
               pollAttempts: attempt + 1,
             });
+            clearPollTimer(jobId);
             // Show browser notification if tab is backgrounded
             if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
               new Notification('Coldbones — Analysis Complete', {
@@ -80,6 +122,7 @@ export function useSlowAnalysis(): UseSlowAnalysisReturn {
               errorMessage: data.error ?? 'Job failed on the server.',
               pollAttempts: attempt + 1,
             });
+            clearPollTimer(jobId);
           } else {
             // Still queued or processing — keep polling
             updateJob(jobId, { status: data.status, pollAttempts: attempt + 1 });
@@ -94,7 +137,7 @@ export function useSlowAnalysis(): UseSlowAnalysisReturn {
 
       pollTimersRef.current.set(jobId, timer);
     },
-    [updateJob],
+    [clearPollTimer, updateJob],
   );
 
   const submitSlowJob = useCallback(
@@ -110,12 +153,27 @@ export function useSlowAnalysis(): UseSlowAnalysisReturn {
       for (const file of files) {
         if (file.status === 'error') continue;
         try {
-          const formData = new FormData();
-          formData.append('file', file.file);
-          formData.append('mode', 'slow');
-          formData.append('lang', lang);
+          const res = await (async () => {
+            if (file.s3Key) {
+              return fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  jobId: file.uploadJobId,
+                  s3Key: file.s3Key,
+                  mode: 'slow',
+                  lang,
+                  filename: file.name,
+                }),
+              });
+            }
 
-          const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+            const formData = new FormData();
+            formData.append('file', file.file);
+            formData.append('mode', 'slow');
+            formData.append('lang', lang);
+            return fetch('/api/analyze', { method: 'POST', body: formData });
+          })();
 
           if (!res.ok) {
             const errData = await res.json().catch(() => ({ detail: 'Submission failed' }));
@@ -216,5 +274,5 @@ export function useSlowAnalysis(): UseSlowAnalysisReturn {
     setJobs([]);
   }, []);
 
-  return { jobs, isSubmitting, submitSlowJob, clearJobs };
+  return { jobs, isSubmitting, submitSlowJob, applyJobEvent, clearJobs };
 }

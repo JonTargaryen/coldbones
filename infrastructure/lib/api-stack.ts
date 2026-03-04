@@ -45,8 +45,8 @@ export class ApiStack extends cdk.Stack {
       UPLOAD_BUCKET: props.uploadBucket.bucketName,
       JOBS_TABLE: props.jobsTable.tableName,
       CONNECTIONS_TABLE: props.connectionsTable.tableName,
-      QUEUE_URL: props.analysisQueue.queueUrl,
-      TOPIC_ARN: props.notificationTopic.topicArn,
+      ANALYZE_QUEUE_URL: props.analysisQueue.queueUrl,
+      SNS_TOPIC_ARN: props.notificationTopic.topicArn,
       STATE_MACHINE_ARN: props.stateMachine.stateMachineArn,
       FAST_ASG_NAME: props.fastAsgName,
       SLOW_ASG_NAME: props.slowAsgName,
@@ -134,9 +134,9 @@ export class ApiStack extends cdk.Stack {
 
     // Allow analyze_router to invoke analyze_orchestrator synchronously
     analyzeOrchestratorFn.grantInvoke(lambdaRole);
-    sharedEnv['ORCHESTRATOR_FUNCTION_NAME'] = analyzeOrchestratorFn.functionName;
+    sharedEnv['ORCHESTRATOR_FUNCTION'] = analyzeOrchestratorFn.functionName;
     analyzeRouterFn.addEnvironment(
-      'ORCHESTRATOR_FUNCTION_NAME',
+      'ORCHESTRATOR_FUNCTION',
       analyzeOrchestratorFn.functionName,
     );
 
@@ -145,21 +145,53 @@ export class ApiStack extends cdk.Stack {
       memorySize: 1024,
     });
 
-    // SQS trigger for batch processor
-    batchProcessorFn.addEventSource(
+    const lifecycleManagerFn = fn('LifecycleManagerFn', 'lifecycle_manager', {
+      timeout: cdk.Duration.minutes(5),
+    });
+
+    const slowQueueStarterFn = fn('SlowQueueStarterFn', 'slow_queue_starter', {
+      timeout: cdk.Duration.minutes(1),
+      memorySize: 256,
+    });
+
+    slowQueueStarterFn.addEnvironment(
+      'LIFECYCLE_FUNCTION_ARN',
+      lifecycleManagerFn.functionArn,
+    );
+    slowQueueStarterFn.addEnvironment(
+      'BATCH_PROCESSOR_FUNCTION_ARN',
+      batchProcessorFn.functionArn,
+    );
+
+    // SQS trigger for Step Functions starter
+    slowQueueStarterFn.addEventSource(
       new eventsources.SqsEventSource(props.analysisQueue as sqs.Queue, {
         batchSize: 1,
         enabled: true,
+        reportBatchItemFailures: true,
       }),
     );
+
+    props.stateMachine.grantStartExecution(slowQueueStarterFn);
+
+    // State machine definition uses dynamic task targets from execution input,
+    // so we grant explicit permissions to invoke/publish/send from its role.
+    (props.stateMachine as sfn.StateMachine).addToRolePolicy(new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: [lifecycleManagerFn.functionArn, batchProcessorFn.functionArn],
+    }));
+    (props.stateMachine as sfn.StateMachine).addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sns:Publish'],
+      resources: [props.notificationTopic.topicArn],
+    }));
+    (props.stateMachine as sfn.StateMachine).addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sqs:SendMessage', 'sqs:GetQueueAttributes'],
+      resources: [props.analysisQueue.queueArn],
+    }));
 
     const jobStatusFn = fn('JobStatusFn', 'job_status', {
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
-    });
-
-    const lifecycleManagerFn = fn('LifecycleManagerFn', 'lifecycle_manager', {
-      timeout: cdk.Duration.minutes(5),
     });
 
     const wsConnectFn = fn('WsConnectFn', 'ws_connect', {
@@ -205,7 +237,7 @@ export class ApiStack extends cdk.Stack {
       deployOptions: {
         stageName: 'v1',
         throttlingRateLimit: 10,
-        throttlingBurstLimit: 50,
+        throttlingBurstLimit: 100,
         accessLogDestination: new apigw.LogGroupLogDestination(accessLog),
         accessLogFormat: apigw.AccessLogFormat.jsonWithStandardFields(),
         tracingEnabled: true,
@@ -274,7 +306,7 @@ export class ApiStack extends cdk.Stack {
       ],
     }));
 
-    wsNotifyFn.addEnvironment('WS_ENDPOINT', wsStage.callbackUrl);
+    wsNotifyFn.addEnvironment('WS_GATEWAY_URL', wsStage.callbackUrl);
 
     // ─── Outputs ───────────────────────────────────────────────────────────
     new cdk.CfnOutput(this, 'RestApiUrl', {
