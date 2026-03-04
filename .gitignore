@@ -44,16 +44,10 @@ backend/.venv/
 # ----- Node / Frontend / Infra -----
 node_modules/
 frontend/node_modules/
-infrastructure/node_modules/
 frontend/dist/
-infrastructure/dist/
 
 # ----- TypeScript / Build Info -----
 *.tsbuildinfo
-
-# ----- CDK / AWS -----
-infrastructure/cdk.out/
-cdk.out/
 
 # ----- Runtime / Temp -----
 *.pid

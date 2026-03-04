@@ -1,5 +1,5 @@
 /**
- * useWebSocket — connects to the API Gateway WebSocket endpoint for push notifications.
+ * useWebSocket — connects to an optional WebSocket endpoint for push notifications.
  *
  * Features:
  *  - Automatic reconnect with exponential backoff (capped at 30s)

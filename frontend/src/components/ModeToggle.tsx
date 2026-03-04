@@ -28,7 +28,7 @@ export function ModeToggle({ disabled = false }: ModeToggleProps) {
         className={`mode-btn ${mode === 'slow' ? 'active' : ''}`}
         onClick={() => handleToggle('slow')}
         disabled={disabled}
-        title="Slow mode: queued processing — Spot GPU, up to 90% cheaper, batch support"
+        title="Slow mode: queued processing — best for larger batches and background analysis"
         aria-pressed={mode === 'slow'}
       >
         <span className="mode-icon" aria-hidden="true">🐢</span>

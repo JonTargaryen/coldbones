@@ -3,7 +3,7 @@
  *
  * Flow:
  *  1. POST /api/analyze with mode=slow for each file (or batch)
- *  2. If response contains jobId → poll /api/status/{jobId} every 5s
+ *  2. If response contains jobId → poll /api/status/{jobId} every 5s (when available)
  *  3. If response contains full result (local dev fallback) → store immediately
  *  4. WebSocket push notifications are handled separately by useWebSocket
  */

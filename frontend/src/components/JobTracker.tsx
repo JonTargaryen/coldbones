@@ -17,8 +17,8 @@ export function JobTracker({ jobs }: JobTrackerProps) {
           Results will appear here when complete.
         </p>
         <div className="job-tracker-info">
-          <p>🐢 <strong>Slow mode</strong> uses Spot GPU instances — up to 90% cheaper than Fast mode.</p>
-          <p>Typical wait: 2–10 minutes (includes GPU spin-up if needed).</p>
+          <p>🐢 <strong>Slow mode</strong> uses queued background processing for larger files and batches.</p>
+          <p>Typical wait: 2–10 minutes depending on queue depth and model load.</p>
         </div>
       </div>
     );

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "bash ./scripts/dev.sh",
     "dev:stop": "bash ./scripts/dev-stop.sh",
-    "dev:check": "bash ./scripts/dev-check.sh"
+    "dev:check": "bash ./scripts/dev-check.sh",
+    "publish:cloudflare": "bash ./scripts/publish-cloudflare.sh"
   }
 }
