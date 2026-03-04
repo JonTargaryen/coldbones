@@ -9,8 +9,6 @@ export interface UploadedFile {
   previewUrl: string;
   status: 'pending' | 'uploading' | 'uploaded' | 'analyzing' | 'complete' | 'error';
   progress: number;
-  s3Key?: string;
-  uploadJobId?: string;
   error?: string;
 }
 
@@ -29,9 +27,8 @@ export interface AnalysisResult {
 
 export interface JobStatus {
   jobId: string;
-  status: 'queued' | 'processing' | 'complete' | 'failed';
+  status: 'processing' | 'complete' | 'failed';
   result?: AnalysisResult;
-  estimatedWait?: number;
   createdAt: string;
 }
 

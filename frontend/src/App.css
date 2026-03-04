@@ -1322,11 +1322,6 @@ body {
   letter-spacing: 0.03em;
 }
 
-.job-badge-queued {
-  background: rgba(85, 85, 102, 0.3);
-  color: var(--text-muted);
-}
-
 .job-badge-processing {
   background: rgba(74, 108, 247, 0.2);
   color: var(--accent);
@@ -1340,11 +1335,6 @@ body {
 .job-badge-failed {
   background: rgba(239, 68, 68, 0.15);
   color: var(--error);
-}
-
-.job-eta {
-  font-size: 0.75rem;
-  color: var(--text-dim);
 }
 
 .job-expand-hint {

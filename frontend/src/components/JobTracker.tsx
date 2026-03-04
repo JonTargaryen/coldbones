@@ -13,12 +13,12 @@ export function JobTracker({ jobs }: JobTrackerProps) {
     return (
       <div className="job-tracker empty-state">
         <p className="job-tracker-empty">
-          Submit files in 🐢 Slow mode to queue them for processing.
+          Submit files in 🐢 Slow mode to process them with local background-style handling.
           Results will appear here when complete.
         </p>
         <div className="job-tracker-info">
-          <p>🐢 <strong>Slow mode</strong> uses queued background processing for larger files and batches.</p>
-          <p>Typical wait: 2–10 minutes depending on queue depth and model load.</p>
+          <p>🐢 <strong>Slow mode</strong> uses local sequential processing for larger files and batches.</p>
+          <p>Typical wait: 1–10 minutes depending on file size and model load.</p>
         </div>
       </div>
     );
@@ -26,7 +26,7 @@ export function JobTracker({ jobs }: JobTrackerProps) {
 
   const completedCount = jobs.filter(j => j.status === 'complete').length;
   const failedCount = jobs.filter(j => j.status === 'failed').length;
-  const pendingCount = jobs.filter(j => j.status === 'queued' || j.status === 'processing').length;
+  const pendingCount = jobs.filter(j => j.status === 'processing').length;
 
   return (
     <div className="job-tracker">
@@ -56,9 +56,6 @@ export function JobTracker({ jobs }: JobTrackerProps) {
               <span className="job-filename" title={job.fileName}>{job.fileName}</span>
               <div className="job-meta">
                 <StatusBadge status={job.status} />
-                {job.estimatedWait !== null && job.status === 'queued' && (
-                  <span className="job-eta">~{Math.ceil(job.estimatedWait / 60)}m wait</span>
-                )}
                 {job.status === 'complete' && job.result && (
                   <span className="job-expand-hint">{expandedJobId === job.jobId ? '▲ hide' : '▼ view'}</span>
                 )}
@@ -109,7 +106,6 @@ export function JobTracker({ jobs }: JobTrackerProps) {
 
 function statusIcon(status: SlowJob['status']): string {
   switch (status) {
-    case 'queued': return '⏳';
     case 'processing': return '🔄';
     case 'complete': return '✅';
     case 'failed': return '❌';
@@ -119,7 +115,6 @@ function statusIcon(status: SlowJob['status']): string {
 
 function StatusBadge({ status }: { status: SlowJob['status'] }) {
   const labels: Record<SlowJob['status'], string> = {
-    queued: 'Queued',
     processing: 'Processing',
     complete: 'Complete',
     failed: 'Failed',

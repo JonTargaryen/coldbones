@@ -4,8 +4,6 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { useUpload } from './hooks/useUpload';
 import { useAnalysis } from './hooks/useAnalysis';
 import { useSlowAnalysis } from './hooks/useSlowAnalysis';
-import { useWebSocket } from './hooks/useWebSocket';
-import type { AnalysisResult } from './types';
 import { UploadZone } from './components/UploadZone';
 import { FilePreview } from './components/FilePreview';
 import { AnalysisPanel } from './components/AnalysisPanel';
@@ -99,31 +97,12 @@ function AppContent() {
   const { lang, t } = useLanguage();
   const { files, addFiles, removeFile, clearFiles, updateFile } = useUpload();
   const { results, isAnalyzing, currentFileId, error, analyzeAll, clearResults } = useAnalysis();
-  const { jobs, isSubmitting, submitSlowJob, applyJobEvent, clearJobs } = useSlowAnalysis();
+  const { jobs, isSubmitting, submitSlowJob, clearJobs } = useSlowAnalysis();
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const health = useHealthCheck();
-
-  useWebSocket({
-    onMessage: (msg) => {
-      if (!msg.jobId) return;
-      if (msg.type === 'job_complete') {
-        applyJobEvent({
-          jobId: msg.jobId,
-          status: 'complete',
-          result: msg.result as AnalysisResult | undefined,
-        });
-      } else if (msg.type === 'job_failed') {
-        applyJobEvent({
-          jobId: msg.jobId,
-          status: 'failed',
-          error: msg.error,
-        });
-      }
-    },
-  });
 
   useEffect(() => {
     if (isAnalyzing) {

@@ -138,6 +138,6 @@ PORT=8000
 
 ## Notes
 
-- The frontend still supports optional queued/slow-mode UX where API endpoints provide job IDs.
-- In pure local mode, backend returns results synchronously and frontend falls back gracefully.
-- If you want a full local async queue later, add Redis + worker (RQ/Celery) behind `/api/status/{jobId}`.
+- The frontend is now local-only: files are sent directly to `/api/analyze` using multipart form data.
+- Slow mode is implemented as local background-style sequential processing in the UI.
+- There are no required cloud queue, status polling, or WebSocket endpoints in this branch.

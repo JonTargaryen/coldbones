@@ -23,31 +23,15 @@ export function useAnalysis(): UseAnalysisReturn {
     setError(null);
 
     try {
-      const response = await (async () => {
-        if (file.s3Key) {
-          return fetch('/api/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jobId: file.uploadJobId,
-              s3Key: file.s3Key,
-              mode,
-              lang,
-              filename: file.name,
-            }),
-          });
-        }
+      const formData = new FormData();
+      formData.append('file', file.file);
+      formData.append('mode', mode);
+      formData.append('lang', lang);
 
-        const formData = new FormData();
-        formData.append('file', file.file);
-        formData.append('mode', mode);
-        formData.append('lang', lang);
-
-        return fetch('/api/analyze', {
-          method: 'POST',
-          body: formData,
-        });
-      })();
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        body: formData,
+      });
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({ detail: 'Analysis failed' }));
