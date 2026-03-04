@@ -109,7 +109,7 @@ body {
   z-index: 100;
 }
 
-.header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.header-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-shrink: 0; }
 
 .app-title {
   font-size: 1.25rem;
@@ -253,42 +253,9 @@ body {
   overflow-y: auto;
 }
 
-/* Legacy sidebar — kept for backward compat with any older references */
-.sidebar {
-  display: flex; flex-direction: column; gap: 12px;
-  padding: 20px 16px;
-  border-right: 1px solid var(--md-outline-variant);
-  overflow-y: auto;
-}
-
-.action-row { display: flex; gap: 8px; }
-
-/* Legacy panel names */
-.left-panel { display: flex; flex-direction: column; gap: 16px; padding: 20px; border-right: 1px solid var(--md-outline-variant); overflow-y: auto; }
-.right-panel { display: flex; flex-direction: column; padding: 20px; overflow-y: auto; }
-.action-bar { display: flex; gap: 8px; }
-
 /* ══════════════════════════════════════════════
    ══ MATERIAL BUTTONS
    ══════════════════════════════════════════════ */
-
-/* MD3 Filled Button */
-.btn-analyze {
-  flex: 1; height: 40px; padding: 0 24px;
-  border: none; border-radius: var(--md-shape-full);
-  font-family: 'Roboto', sans-serif; font-size: 0.875rem; font-weight: 500;
-  letter-spacing: 0.00625em; cursor: pointer;
-  transition: box-shadow 0.2s, filter 0.2s;
-  background: var(--md-primary); color: var(--md-on-primary);
-  min-height: var(--min-touch);
-  display: flex; align-items: center; justify-content: center;
-}
-.btn-analyze:hover:not(:disabled) { box-shadow: var(--md-elev-2); filter: brightness(1.08); }
-.btn-analyze:active:not(:disabled) { filter: brightness(0.92); box-shadow: none; }
-.btn-analyze:disabled {
-  background: rgba(227,227,227,0.12); color: rgba(227,227,227,0.38);
-  cursor: not-allowed; box-shadow: none;
-}
 
 /* MD3 Outlined Button */
 .btn-clear {
@@ -599,10 +566,6 @@ body {
     max-height: 48vh;
   }
   .result-panel { min-height: 40vh; }
-
-  /* Legacy */
-  .sidebar, .left-panel { border-right: none; border-bottom: 1px solid var(--md-outline-variant); max-height: 50vh; }
-  .right-panel { min-height: 40vh; }
 }
 
 /* ══════════════════════════════════════════════
@@ -612,6 +575,14 @@ body {
   .app-header { padding: 0 12px; height: 56px; }
   .app-title { font-size: 1.1rem; }
 
+  /* Compact the right-side header controls so they don't overflow on 375px screens */
+  .header-right { gap: 6px; }
+  .lang-select { font-size: 0.82rem; min-width: 80px; padding: 6px 24px 6px 8px; }
+  .mode-btn { padding: 0 10px; min-width: 40px; font-size: 0.82rem; }
+  /* Collapse health chip to dot-only — full text still in tooltip */
+  .health-label { display: none; }
+  .health-ok, .health-err { padding: 6px 8px; gap: 0; }
+
   .hero { padding: 28px 16px 24px; }
   .hero-title { font-size: 1.75rem; }
   .hero-subtitle { font-size: 0.88rem; }
@@ -619,7 +590,7 @@ body {
 
   .results-sidebar, .result-panel { padding: 12px; gap: 10px; }
   .upload-zone { padding: 16px 12px; }
-  .btn-analyze, .btn-clear { height: 44px; }
+  .btn-clear { height: 44px; }
   .thumbnail { width: 56px; height: 56px; }
   .thumb-remove { display: flex; }
   .result-section { padding: 12px; }
@@ -627,12 +598,6 @@ body {
   .analysis-elapsed { font-size: 1.6rem; }
   .preview-image { max-height: 250px; }
   .preview-image-container { min-height: 140px; }
-  .lang-select { font-size: 0.82rem; min-width: 100px; }
-  .header-right { gap: 6px; }
-  .mode-btn { padding: 0 12px; }
-
-  /* Legacy */
-  .sidebar, .left-panel, .right-panel { padding: 12px; gap: 10px; }
 }
 
 /* ══════════════════════════════════════════════
@@ -641,7 +606,8 @@ body {
 @media (max-width: 380px) {
   .app-header { padding: 0 10px; }
   .header-right { gap: 4px; }
-  .lang-select { min-width: 90px; padding: 6px 26px 6px 8px; }
+  .lang-select { min-width: 70px; padding: 6px 22px 6px 6px; font-size: 0.78rem; }
+  .mode-btn { padding: 0 8px; min-width: 36px; font-size: 0.78rem; }
   .hero { padding: 20px 12px 20px; }
   .hero-title { font-size: 1.5rem; }
   .btn-analyze-now { height: 48px; }

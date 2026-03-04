@@ -45,7 +45,7 @@
       "maxPdfPages": 20,
       "apiThrottleRateLimit": 20,
       "apiThrottleBurstLimit": 50,
-      "apiGatewayDomain": "la0cszeq83.execute-api.us-east-1.amazonaws.com",
+      "apiGatewayDomain": "m6rya8h7ab.execute-api.us-east-1.amazonaws.com",
       "apiGatewayStageName": "v1"
     }
   }

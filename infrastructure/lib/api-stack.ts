@@ -2,7 +2,8 @@ import * as cdk from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as apigw from 'aws-cdk-lib/aws-apigateway';
+import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
@@ -28,7 +29,17 @@ export interface ApiStackProps extends cdk.StackProps {
 }
 
 export class ApiStack extends cdk.Stack {
-  public readonly restApi: apigw.RestApi;
+  // HTTP API V2 — 71% cheaper than REST API ($1.00 vs $3.50 per million requests).
+  // Switched from REST API (apigw.RestApi) because:
+  //   - We don't use API keys, usage plans, request validators, or authorizers
+  //     — features that justify REST API's higher price.
+  //   - The mock integration for /api/health (the only REST-API-specific feature
+  //     we used) is replaced by a trivial inline Lambda that costs <$0.00001/month.
+  //   - HTTP API supports per-route Lambda integrations, throttling, CORS, and
+  //     access logging — everything we need.
+  //   - The named 'v1' stage keeps CloudFront's originPath: '/v1' unchanged,
+  //     so StorageStack needs no update for existing CloudFront distributions.
+  public readonly httpApi: apigwv2.HttpApi;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -133,14 +144,18 @@ export class ApiStack extends cdk.Stack {
           });
 
       return new lambda.Function(this, id, {
-        runtime:     lambda.Runtime.PYTHON_3_12,
-        handler:     'handler.handler',
+        runtime:      lambda.Runtime.PYTHON_3_12,
+        handler:      'handler.handler',
         code,
-        timeout:     cdk.Duration.minutes(5),
-        memorySize:  512,
-        environment: { ...sharedEnv },
-        role:        lambdaRole,
-        tracing:     lambda.Tracing.ACTIVE,
+        timeout:      cdk.Duration.minutes(5),
+        memorySize:   512,
+        environment:  { ...sharedEnv },
+        role:         lambdaRole,
+        tracing:      lambda.Tracing.ACTIVE,
+        // Explicit retention prevents log groups from accumulating forever
+        // (Lambda auto-creates log groups with no retention by default).
+        // CloudWatch Logs: $0.50/GB ingested + $0.03/GB/month stored.
+        logRetention: logs.RetentionDays.ONE_WEEK,
         ...extra,
       });
     };
@@ -154,11 +169,18 @@ export class ApiStack extends cdk.Stack {
 
     const analyzeOrchestratorFn = fn('AnalyzeOrchestratorFn', 'analyze_orchestrator', {
       timeout:    cdk.Duration.minutes(10),
-      memorySize: 512,
+      // 256 MB is sufficient — orchestrator makes HTTP calls to Tailscale/LM
+      // Studio and waits; no image processing happens inside Lambda. Halving
+      // from 512 MB saves ~50% on GB-second cost per invocation.
+      memorySize: 256,
     });
 
     const analyzeRouterFn = fn('AnalyzeRouterFn', 'analyze_router', {
-      timeout:    cdk.Duration.minutes(11),
+      // Router writes one DynamoDB item + fires an async Lambda invoke and
+      // returns 202. That takes <3 s. The 29 s API Gateway hard limit already
+      // caps the HTTP response, but a hanging Lambda would waste compute for
+      // up to the old 11-minute timeout. 30 s cuts that waste.
+      timeout:    cdk.Duration.seconds(30),
       memorySize: 256,
     });
     analyzeRouterFn.addEnvironment('ORCHESTRATOR_FUNCTION_ARN', analyzeOrchestratorFn.functionArn);
@@ -168,97 +190,115 @@ export class ApiStack extends cdk.Stack {
       memorySize: 128,
     });
 
-    // ─── REST API ──────────────────────────────────────────────────────────────
-    // Throttle: 20 req/s sustained, 50 burst.  The desktop can only process
-    // one inference at a time, so there's no point accepting more requests
-    // than that.  The limits protect both the Lambda concurrency quota and the
-    // desktop GPU from being overwhelmed by runaway clients.
-    //
-    // CORS defaultCorsPreflightOptions:
-    //   API Gateway handles OPTIONS preflight automatically when this is set.
-    //   Without it, browsers would block all cross-origin requests even though
-    //   our Lambda responses include Access-Control-Allow-Origin: *.
-    //   (CloudFront forwards CORS headers from the origin, so both the
-    //   Lambda and APIGW need to agree on the allowed origins.)
-    const accessLog = new logs.LogGroup(this, 'ApiAccessLog', {
-      retention:     logs.RetentionDays.ONE_WEEK,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    // ─── Health Lambda ──────────────────────────────────────────────────────
+    // HTTP API has no mock integration (that was a REST API feature), so we
+    // use a tiny inline Lambda instead. Inline code avoids a deploy artifact
+    // and the function itself is ~5 lines — no external dependencies needed.
+    // At our traffic level this costs effectively $0 (well within free tier).
+    const healthBody = JSON.stringify({
+      status:       'ok',
+      model_loaded: true,
+      model:        modelName,
+      provider:     'LM Studio (desktop RTX 5090 via Tailscale)',
+    });
+    const healthFn = new lambda.Function(this, 'HealthFn', {
+      runtime:   lambda.Runtime.PYTHON_3_12,
+      handler:   'index.handler',
+      code:      lambda.Code.fromInline(
+        `import json\nBODY = '${healthBody.replace(/'/g, "\\'")}'\n` +
+        `def handler(event, context):\n` +
+        `    return {"statusCode": 200, "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}, "body": BODY}\n`,
+      ),
+      timeout:      cdk.Duration.seconds(5),
+      memorySize:   128,
+      logRetention: logs.RetentionDays.ONE_WEEK,
     });
 
-    this.restApi = new apigw.RestApi(this, 'RestApi', {
-      restApiName: 'coldbones-api',
-      description: 'Coldbones REST API — inference on desktop RTX 5090 via Tailscale',
-      deployOptions: {
-        stageName:               'v1',
-        throttlingRateLimit:     20,
-        throttlingBurstLimit:    50,
-        accessLogDestination:    new apigw.LogGroupLogDestination(accessLog),
-        accessLogFormat:         apigw.AccessLogFormat.jsonWithStandardFields(),
-        tracingEnabled:          true,
-        metricsEnabled:          true,
-      },
-      defaultCorsPreflightOptions: {
+    // ─── HTTP API V2 ───────────────────────────────────────────────────────
+    // corsPreflight: HTTP API handles OPTIONS automatically when this is set,
+    // just like REST API's defaultCorsPreflightOptions did.
+    this.httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
+      apiName:    'coldbones-api',
+      description: 'Coldbones HTTP API — inference on desktop RTX 5090 via Tailscale',
+      // Disable the auto-created $default stage so we can create a named 'v1'
+      // stage below.  This keeps the CloudFront originPath: '/v1' unchanged —
+      // no cdk.json update needed after switching from REST → HTTP API.
+      createDefaultStage: false,
+      corsPreflight: {
         allowOrigins: allowedOrigins,
-        allowMethods: apigw.Cors.ALL_METHODS,
+        allowMethods: [apigwv2.CorsHttpMethod.ANY],
         allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
         maxAge:       cdk.Duration.hours(1),
       },
     });
 
-    const api = this.restApi.root.addResource('api');
+    // Named 'v1' stage with throttling.
+    // Throttle: 20 req/s sustained, 50 burst — the desktop processes one job
+    // at a time so accepting more requests just queues them or returns errors.
+    const stage = new apigwv2.HttpStage(this, 'Stage', {
+      httpApi:    this.httpApi,
+      stageName:  'v1',
+      autoDeploy: true,
+      throttle: {
+        rateLimit:  20,
+        burstLimit: 50,
+      },
+    });
 
-    // GET /api/health
-    // GET /api/health  ── Mock integration (no Lambda)
-    // A mock integration returns a static response directly from API Gateway
-    // without invoking any Lambda.  It costs $0 (no Lambda invocations) and
-    // has zero cold-start latency.
-    //
-    // model_loaded: true tells the frontend's health-check gate that the
-    // backend is ready to accept work.  The frontend disables the upload zone
-    // when this is false or missing (health === null).
-    //
-    // Note: The actual LM Studio liveness is checked only when a file is
-    // submitted (analyze_router calls is_desktop_alive()).  This health
-    // endpoint is intentionally a lightweight "API is deployed" check, not a
-    // "GPU is running" check, to avoid adding 4 s of Tailscale latency to
-    // every page load.
-    const health = api.addResource('health');
-    health.addMethod('GET', new apigw.MockIntegration({
-      integrationResponses: [{
-        statusCode: '200',
-        responseTemplates: {
-          'application/json': JSON.stringify({
-            status:       'ok',
-            model_loaded: true,
-            model:        modelName,
-            provider:     'LM Studio (desktop RTX 5090 via Tailscale)',
-          }),
-        },
-      }],
-      passthroughBehavior:   apigw.PassthroughBehavior.NEVER,
-      requestTemplates:      { 'application/json': '{"statusCode": 200}' },
-    }), { methodResponses: [{ statusCode: '200' }] });
+    // ─── Routes ─────────────────────────────────────────────────────────────
+    // PayloadFormatVersion 1.0 keeps the Lambda event shape identical to the
+    // old REST API proxy format (event.body, event.pathParameters, etc.) so
+    // no handler code changes are needed.
 
-    // POST /api/presign
-    const presign = api.addResource('presign');
-    presign.addMethod('POST', new apigw.LambdaIntegration(presignedUrlFn));
+    this.httpApi.addRoutes({
+      path:        '/api/health',
+      methods:     [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('HealthInteg', healthFn, {
+        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_1_0,
+      }),
+    });
 
-    // POST /api/analyze
-    const analyze = api.addResource('analyze');
-    analyze.addMethod('POST', new apigw.LambdaIntegration(analyzeRouterFn, {
-      timeout: cdk.Duration.seconds(29),
-    }));
+    this.httpApi.addRoutes({
+      path:        '/api/presign',
+      methods:     [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration('PresignInteg', presignedUrlFn, {
+        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_1_0,
+      }),
+    });
 
-    // GET /api/status/{jobId}
-    const status    = api.addResource('status');
-    const statusJob = status.addResource('{jobId}');
-    statusJob.addMethod('GET', new apigw.LambdaIntegration(jobStatusFn));
+    this.httpApi.addRoutes({
+      path:        '/api/analyze',
+      methods:     [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration('AnalyzeInteg', analyzeRouterFn, {
+        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_1_0,
+        // HTTP API max integration timeout is 30 s — same practical cap as
+        // the old REST API LambdaIntegration timeout of 29 s.
+        timeout: cdk.Duration.seconds(29),
+      }),
+    });
 
-    // ─── Outputs ───────────────────────────────────────────────────────────
+    this.httpApi.addRoutes({
+      path:        '/api/status/{jobId}',
+      methods:     [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('StatusInteg', jobStatusFn, {
+        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_1_0,
+      }),
+    });
+
+    // ─── Outputs ──────────────────────────────────────────────────────────
     new cdk.CfnOutput(this, 'ApiUrl', {
-      value:       this.restApi.url,
-      description: 'REST API URL — set as VITE_API_BASE_URL',
+      value:       `${this.httpApi.apiEndpoint}/v1/`,
+      description: 'HTTP API V2 stage URL',
       exportName:  'ColdbonesApiUrl',
+    });
+
+    // ApiDomain is the bare hostname needed for CloudFront's apiGatewayDomain
+    // in cdk.json context.  After deploying this stack, copy this value into
+    // cdk.json → coldbones.apiGatewayDomain, then run: deploy.sh storage
+    new cdk.CfnOutput(this, 'ApiDomain', {
+      value:       cdk.Fn.select(2, cdk.Fn.split('/', this.httpApi.apiEndpoint)),
+      description: 'Hostname only — paste into cdk.json → coldbones.apiGatewayDomain, then run deploy.sh storage',
+      exportName:  'ColdbonesApiDomain',
     });
   }
 }

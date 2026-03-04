@@ -141,21 +141,21 @@ export default function App() {
                 className="health-ok"
                 title={`${health.provider} · ${health.model}`}
               >
-                ● {health.provider}
+                ● <span className="health-label">{health.provider.split('(')[0].trim()}</span>
               </span>
             ) : health ? (
               <span
                 className="health-err"
                 title="GPU server unreachable"
               >
-                ● Server offline
+                ● <span className="health-label">Server offline</span>
               </span>
             ) : (
               <span
                 className="health-err"
                 title={healthError ?? 'Checking…'}
               >
-                ● {healthError ? 'Offline' : 'Connecting…'}
+                ● <span className="health-label">{healthError ? 'Offline' : 'Connecting…'}</span>
               </span>
             )}
           </div>
@@ -163,7 +163,7 @@ export default function App() {
       </header>
 
       {/* Main layout */}
-      <main className="app-main" id="main-content">
+      <main className="app-main">
 
         {/* ── Hero: Visual Analyzer ── */}
         <section className="hero">
