@@ -2,16 +2,16 @@ from __future__ import annotations
 
 """
 ColdBones local development backend
-FastAPI server that calls a vLLM inference server via the OpenAI-compatible API.
+FastAPI server that calls LM Studio (running on Seratonin via Tailscale) via the OpenAI-compatible API.
 
 Usage:
   pip install -r requirements.txt
-  uvicorn main:app --reload --port 9000   # Use 9000 so it doesn't clash with vLLM on 8000
+  uvicorn main:app --reload --port 9000
 
 Environment variables (set in .env):
-  VLLM_URL              http://localhost:8000   (local vLLM, or cloud GPU private IP)
-  VLLM_API_KEY          token-coldbones         (or any non-empty value)
-  MODEL_NAME            Qwen/Qwen3.5-35B-A3B-AWQ
+  LM_STUDIO_URL         https://seratonin.tail40ae2c.ts.net  (Tailscale Funnel URL)
+  LM_STUDIO_API_KEY     lm-studio                           (LM Studio ignores value but requires non-empty)
+  MODEL_NAME            qwen/qwen3.5-35b-a3b
   MAX_INFERENCE_TOKENS  8192
   MAX_PDF_PAGES         20
 """
@@ -39,9 +39,9 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("coldbones")
 
-VLLM_URL   = os.environ.get("VLLM_URL",   "http://localhost:8000")
-VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "token-coldbones")
-MODEL_NAME  = os.environ.get("MODEL_NAME",  "Qwen/Qwen3.5-35B-A3B-AWQ")
+LM_STUDIO_URL     = os.environ.get("LM_STUDIO_URL",     "http://localhost:1234")
+LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
+MODEL_NAME        = os.environ.get("MODEL_NAME",        "qwen/qwen3.5-35b-a3b")
 MAX_TOKENS  = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", 20))
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB pre-compression
@@ -68,30 +68,30 @@ LANGUAGE_INSTRUCTIONS = {
     "bn": "IMPORTANT: Respond entirely in Bengali (বাংলা). All JSON values must be in Bengali.",
 }
 
-vllm_client: OpenAI | None = None
+lm_client: OpenAI | None = None
 active_model: str = MODEL_NAME
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global vllm_client, active_model
+    global lm_client, active_model
     try:
         probe = OpenAI(
-            base_url=f"{VLLM_URL.rstrip('/')}/v1",
-            api_key=VLLM_API_KEY,
+            base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
+            api_key=LM_STUDIO_API_KEY,
             timeout=10.0,
         )
         models = probe.models.list()
         if models.data:
             active_model = models.data[0].id
-        vllm_client = OpenAI(
-            base_url=f"{VLLM_URL.rstrip('/')}/v1",
-            api_key=VLLM_API_KEY,
+        lm_client = OpenAI(
+            base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
+            api_key=LM_STUDIO_API_KEY,
             timeout=120.0,
         )
-        logger.info(f"vLLM ready at {VLLM_URL} — model: {active_model}")
+        logger.info(f"LM Studio ready at {LM_STUDIO_URL} — model: {active_model}")
     except Exception as e:
-        logger.warning(f"Could not reach vLLM on startup: {e}. Will retry on first request.")
+        logger.warning(f"Could not reach LM Studio on startup: {e}. Will retry on first request.")
     yield
 
 
@@ -139,14 +139,14 @@ async def local_upload(token: str, filename: str, request: Request):
 
 @app.get("/api/health")
 async def health():
-    global vllm_client, active_model
+    global lm_client, active_model
     model_loaded = False
     current_model = active_model
 
     try:
         probe = OpenAI(
-            base_url=f"{VLLM_URL.rstrip('/')}/v1",
-            api_key=VLLM_API_KEY,
+            base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
+            api_key=LM_STUDIO_API_KEY,
             timeout=5.0,
         )
         models = probe.models.list()
@@ -160,8 +160,8 @@ async def health():
     return {
         "status": "ok" if model_loaded else "degraded",
         "model": current_model,
-        "provider": "RTX 5090",
-        "vllm_url": VLLM_URL,
+        "provider": "LM Studio (Seratonin)",
+        "lm_studio_url": LM_STUDIO_URL,
         "model_loaded": model_loaded,
     }
 
@@ -173,8 +173,8 @@ async def analyze(request: Request):
     2. application/json     — {s3Key, filename, lang, mode}  (used by AWS flow
        after uploading to S3 / localupload)
     """
-    if vllm_client is None:
-        raise HTTPException(503, "vLLM client not initialised — is the vLLM server running?")
+    if lm_client is None:
+        raise HTTPException(503, "LM Studio client not initialised — is LM Studio running on Seratonin?")
 
     ct = request.headers.get("content-type", "")
 
@@ -236,7 +236,7 @@ async def analyze(request: Request):
     content.append({"type": "text", "text": analysis_text})
 
     try:
-        response = vllm_client.chat.completions.create(
+        response = lm_client.chat.completions.create(
             model=active_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -249,8 +249,8 @@ async def analyze(request: Request):
     except APIConnectionError:
         raise HTTPException(
             502,
-            f"Cannot reach vLLM at {VLLM_URL}. "
-            "Make sure vLLM is running (locally: vllm serve Qwen/Qwen3.5-35B-A3B-AWQ --port 8000).",
+            f"Cannot reach LM Studio at {LM_STUDIO_URL}. "
+            "Make sure LM Studio is running on Seratonin and accessible via Tailscale.",
         )
     except Exception as e:
         raise HTTPException(502, f"Inference failed: {e}")
@@ -277,7 +277,7 @@ async def analyze(request: Request):
         "processing_time_ms": elapsed_ms,
         "mode": mode,
         "model": active_model,
-        "provider": "RTX 5090",
+        "provider": "LM Studio (Seratonin)",
     }
 
 
@@ -312,21 +312,19 @@ def _image_to_data_url(raw_bytes: bytes) -> str | None:
 
 def _pdf_to_data_urls(pdf_bytes: bytes) -> list[str]:
     try:
-        import pypdfium2 as pdfium
-        pdf = pdfium.PdfDocument(pdf_bytes)
-        result = []
-        for i in range(min(len(pdf), MAX_PDF_PAGES)):
-            page = pdf[i]
-            bitmap = page.render(scale=150 / 72)
-            pil_image = bitmap.to_pil()
-            buf = io.BytesIO()
-            pil_image.save(buf, format="PNG")
-            result.append("data:image/png;base64," + base64.b64encode(buf.getvalue()).decode())
-        return result
+        import pdf2image
+        pages = pdf2image.convert_from_bytes(pdf_bytes, dpi=150)
     except ImportError:
-        raise RuntimeError("pypdfium2 not installed — run: pip install pypdfium2")
+        raise RuntimeError("pdf2image not installed — run: pip install pdf2image")
     except Exception as e:
         raise RuntimeError(f"PDF conversion failed: {e}")
+
+    result = []
+    for page in pages[:MAX_PDF_PAGES]:
+        buf = io.BytesIO()
+        page.save(buf, format="PNG")
+        result.append("data:image/png;base64," + base64.b64encode(buf.getvalue()).decode())
+    return result
 
 
 def _parse(raw_text: str) -> dict:

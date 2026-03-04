@@ -36,7 +36,7 @@ function PdfCanvas({ file, page, scale }: { file: File; page: number; scale: num
         canvas.width = viewport.width;
 
         if (renderTaskRef.current) renderTaskRef.current.cancel();
-        const task = pdfPage.render({ canvasContext: ctx, viewport, canvas });
+        const task = pdfPage.render({ canvasContext: ctx, viewport });
         renderTaskRef.current = task;
         await task.promise;
       } catch (err: unknown) {

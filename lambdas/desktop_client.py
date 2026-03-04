@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 desktop_client  — shared module for Coldbones Lambda functions
 
@@ -30,7 +31,7 @@ Module-level URL cache:
 import logging
 import os
 import time
-from typing import Tuple
+from typing import Optional, Tuple
 
 import boto3
 import urllib.request
@@ -56,7 +57,7 @@ _ssm = boto3.client('ssm')
 # Module-level cache — re-read SSM at most every _CACHE_TTL_S per Lambda
 # container.  Lambda containers are reused across warm invocations so this cuts
 # SSM API calls to roughly 1 per minute per container instead of 1 per request.
-_cached_base_url: str | None = None
+_cached_base_url: Optional[str] = None
 _cache_time: float = 0.0
 _CACHE_TTL_S = 60.0
 

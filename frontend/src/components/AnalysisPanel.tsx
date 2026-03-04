@@ -94,7 +94,7 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
         <span className="classification-badge">{result.contentClassification}</span>
       </div>
 
-      {result.extractedText && (
+      {result.extractedText && result.extractedText !== 'No text detected.' && (
         <div className="result-section">
           <h3>{t.extractedText}</h3>
           <pre className="extracted-text" tabIndex={0}>{result.extractedText}</pre>

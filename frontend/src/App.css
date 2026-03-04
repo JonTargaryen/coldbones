@@ -132,23 +132,133 @@ body {
 .header-right { display: flex; align-items: center; gap: 8px; }
 
 .app-main {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
-  height: calc(100vh - 64px);
+  overflow-y: auto;
 }
 
-.sidebar {
-  display: flex; flex-direction: column; gap: 12px;
-  padding: 20px 16px;
+/* ══════════════════════════════════════════════
+   ══ HERO — Visual Analyzer
+   ══════════════════════════════════════════════ */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 64px 24px 48px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.hero-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  max-width: 560px;
+}
+
+.hero-title {
+  font-size: 2.5rem;
+  font-weight: 300;
+  color: var(--md-on-background);
+  text-align: center;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+/* Upload zone fills the hero width */
+.hero .upload-zone { width: 100%; }
+
+.hero-cta-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+/* ── Analyze Now — primary hero CTA ── */
+.btn-analyze-now {
+  width: 100%;
+  height: 56px;
+  border: none;
+  border-radius: var(--md-shape-full);
+  font-family: 'Roboto', sans-serif;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.0125em;
+  cursor: pointer;
+  transition: box-shadow 0.2s, filter 0.2s;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: var(--min-touch);
+}
+.btn-analyze-now:hover:not(:disabled) {
+  box-shadow: 0 0 24px rgba(138,180,248,0.35), var(--md-elev-2);
+  filter: brightness(1.07);
+}
+.btn-analyze-now:active:not(:disabled) { filter: brightness(0.92); box-shadow: none; }
+.btn-analyze-now:disabled {
+  background: rgba(227,227,227,0.12);
+  color: rgba(227,227,227,0.38);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.btn-analyze-now-icon { width: 20px; height: 20px; flex-shrink: 0; }
+
+.hero-hint {
+  font-size: 0.78rem;
+  color: var(--md-on-surface-variant);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.hero-limit-note {
+  font-size: 0.72rem;
+  color: var(--md-outline);
+  text-align: center;
+}
+
+/* ══════════════════════════════════════════════
+   ══ RESULTS AREA (below hero)
+   ══════════════════════════════════════════════ */
+.results-area {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  border-top: 1px solid var(--md-outline-variant);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.results-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
   border-right: 1px solid var(--md-outline-variant);
   overflow-y: auto;
 }
 
 .result-panel {
-  display: flex; flex-direction: column;
-  padding: 20px 16px; overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+  overflow-y: auto;
+}
+
+/* Legacy sidebar — kept for backward compat with any older references */
+.sidebar {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 20px 16px;
+  border-right: 1px solid var(--md-outline-variant);
+  overflow-y: auto;
 }
 
 .action-row { display: flex; gap: 8px; }
@@ -473,11 +583,26 @@ body {
    ══ RESPONSIVE — Tablet (≤ 900px)
    ══════════════════════════════════════════════ */
 @media (max-width: 900px) {
-  .app-main { grid-template-columns: 1fr; height: auto; }
-  .sidebar, .left-panel { border-right: none; border-bottom: 1px solid var(--md-outline-variant); max-height: 50vh; }
-  .result-panel, .right-panel { min-height: 40vh; }
   .app-subtitle { display: none; }
   .status-detail { display: none; }
+
+  .hero { padding: 40px 20px 32px; }
+  .hero-title { font-size: 2rem; }
+
+  .results-area {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+  .results-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--md-outline-variant);
+    max-height: 48vh;
+  }
+  .result-panel { min-height: 40vh; }
+
+  /* Legacy */
+  .sidebar, .left-panel { border-right: none; border-bottom: 1px solid var(--md-outline-variant); max-height: 50vh; }
+  .right-panel { min-height: 40vh; }
 }
 
 /* ══════════════════════════════════════════════
@@ -486,7 +611,13 @@ body {
 @media (max-width: 600px) {
   .app-header { padding: 0 12px; height: 56px; }
   .app-title { font-size: 1.1rem; }
-  .sidebar, .result-panel, .left-panel, .right-panel { padding: 12px; gap: 10px; }
+
+  .hero { padding: 28px 16px 24px; }
+  .hero-title { font-size: 1.75rem; }
+  .hero-subtitle { font-size: 0.88rem; }
+  .btn-analyze-now { height: 52px; font-size: 0.95rem; }
+
+  .results-sidebar, .result-panel { padding: 12px; gap: 10px; }
   .upload-zone { padding: 16px 12px; }
   .btn-analyze, .btn-clear { height: 44px; }
   .thumbnail { width: 56px; height: 56px; }
@@ -499,6 +630,9 @@ body {
   .lang-select { font-size: 0.82rem; min-width: 100px; }
   .header-right { gap: 6px; }
   .mode-btn { padding: 0 12px; }
+
+  /* Legacy */
+  .sidebar, .left-panel, .right-panel { padding: 12px; gap: 10px; }
 }
 
 /* ══════════════════════════════════════════════
@@ -508,9 +642,10 @@ body {
   .app-header { padding: 0 10px; }
   .header-right { gap: 4px; }
   .lang-select { min-width: 90px; padding: 6px 26px 6px 8px; }
+  .hero { padding: 20px 12px 20px; }
+  .hero-title { font-size: 1.5rem; }
+  .btn-analyze-now { height: 48px; }
 }
 
-@media (min-width: 1px) {
-  .app-main { min-height: 0; }
-  .result-section p, .result-section li { overflow-wrap: break-word; word-break: break-word; }
-}
+/* Overflow-wrap applies globally */
+.result-section p, .result-section li { overflow-wrap: break-word; word-break: break-word; }

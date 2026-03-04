@@ -37,6 +37,9 @@ os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
 
 
 def _add_lambda(name: str):
+    # Add lambdas root first so shared modules (e.g. desktop_client) are found
+    if LAMBDAS not in sys.path:
+        sys.path.insert(0, LAMBDAS)
     p = os.path.join(LAMBDAS, name)
     if p not in sys.path:
         sys.path.insert(0, p)
@@ -201,19 +204,24 @@ class TestAnalyzeRouter:
             importlib.reload(mod)
             mock_lambda = MagicMock()
             mock_lambda.invoke.return_value = {
-                "StatusCode": 200,
+                "StatusCode": 202,
                 "Payload": MagicMock(read=lambda: json.dumps({
-                    "statusCode": 200,
-                    "body": json.dumps({"summary": "test", "key_observations": [], "content_classification": "photo", "extracted_text": "none"})
+                    "statusCode": 202,
+                    "body": json.dumps({"jobId": "x", "status": "processing"})
                 }).encode())
             }
             mod.lambda_client = mock_lambda
-            event = {
-                "body": json.dumps({"mode": "fast", "s3Key": "uploads/abc/original.png", "lang": "en"}),
-                "httpMethod": "POST",
-            }
-            result = mod.handler(event, CTX)
-        assert result["statusCode"] == 200
+            # Patch is_desktop_alive so fast path is taken (desktop is "alive")
+            with patch("lambdas.analyze_router.handler.is_desktop_alive", return_value=True):
+                event = {
+                    "body": json.dumps({"mode": "fast", "s3Key": "uploads/abc/original.png", "lang": "en"}),
+                    "httpMethod": "POST",
+                }
+                result = mod.handler(event, CTX)
+        # Fast path returns 202 (async fire-and-forget, browser polls for result)
+        assert result["statusCode"] == 202
+        body = json.loads(result["body"])
+        assert "jobId" in body
 
     @mock_aws
     def test_slow_mode_enqueues_to_sqs(self):
@@ -507,7 +515,7 @@ class TestBatchProcessor:
     # ------------------------------------------------------------------
 
     def test_module_imports(self, monkeypatch):
-        """batch_processor module should import without errors."""
+        """batch_processor module (tombstone) should import without errors and expose handler."""
         with patch.dict("os.environ", _BATCH_ENV):
             import importlib
             import lambdas.batch_processor.handler as mod
@@ -515,83 +523,38 @@ class TestBatchProcessor:
             assert hasattr(mod, "handler")
 
     # ------------------------------------------------------------------
-    # happy path — empty SQS event
+    # tombstone behaviour
     # ------------------------------------------------------------------
 
-    def test_empty_event_returns_no_failures(self, monkeypatch):
-        """Empty Records list → handler returns immediately with no failures."""
+    def test_empty_event_returns_empty_dict(self, monkeypatch):
+        """batch_processor is a tombstone — returns {} for empty Records (leaves msgs visible)."""
         with patch.dict("os.environ", _BATCH_ENV):
             import importlib
             import lambdas.batch_processor.handler as mod
             importlib.reload(mod)
             result = mod.handler({"Records": []}, None)
-        assert result == {"batchItemFailures": []}
+        # Tombstone returns {} so SQS does NOT delete the messages.
+        assert result == {}
 
-    # ------------------------------------------------------------------
-    # happy path — full run with mocked S3 + DDB + OpenAI
-    # ------------------------------------------------------------------
-
-    def test_successful_batch(self, monkeypatch):
-        """Single SQS record processed successfully → batchItemFailures empty."""
+    def test_tombstone_drops_records_and_returns_empty(self, monkeypatch):
+        """Tombstone logs a warning and returns {} regardless of record count."""
         with patch.dict("os.environ", _BATCH_ENV):
             import importlib
             import lambdas.batch_processor.handler as mod
             importlib.reload(mod)
-
-            job_id = "job-batch-001"
-            s3_key = "uploads/test/photo.jpg"
-            store: dict = {}
-
-            # Stub s3_client
-            fake_jpg = b"\xff\xd8\xff\xe0" + b"\x00" * 100  # minimal JPEG header
-            class FakeS3Client:
-                def get_object(self_, **kw):  # noqa: N805
-                    return {"Body": io.BytesIO(fake_jpg)}
-            monkeypatch.setattr(mod, "s3_client", FakeS3Client())
-
-            # Stub dynamodb resource — .Table() returns our fake table
-            fake_table = self._fake_table(store)
-            class FakeDynamoDB:
-                def Table(self_, name):  # noqa: N805
-                    return fake_table
-            monkeypatch.setattr(mod, "dynamodb", FakeDynamoDB())
-
-            # Stub OpenAI client
-            analysis_json = json.dumps({
-                "summary": "A cat on a sofa.",
-                "key_observations": ["cat", "sofa"],
-                "content_classification": "photograph",
-                "extracted_text": "No text detected.",
-            })
-            monkeypatch.setattr(mod, "client", self._fake_client(analysis_json))
-
-            # Stub _detect_model + _image_to_data_url (avoid PIL decode of fake bytes)
-            monkeypatch.setattr(mod, "_detect_model", lambda: "qwen3.5-test")
-            monkeypatch.setattr(mod, "_detect_type", lambda raw, key: "image/jpeg")
-            monkeypatch.setattr(mod, "_image_to_data_url", lambda b: "data:image/jpeg;base64,abc")
-
-            # Stub sns_client to avoid real AWS
-            monkeypatch.setattr(mod, "sns_client", MagicMock())
-
-            body = {"jobId": job_id, "s3Key": s3_key, "lang": "en"}
+            body = {"jobId": "job-001", "s3Key": "uploads/x/photo.jpg", "lang": "en"}
             event = self._make_sqs_event([self._make_record(body)])
             result = mod.handler(event, None)
+        # Tombstone always returns {} — messages stay visible for the desktop worker.
+        assert result == {}
 
-        assert result == {"batchItemFailures": []}
-        # Job should be marked COMPLETED
-        assert store.get(job_id, {}).get("_updated") is True
-
-    # ------------------------------------------------------------------
-    # env var assertions
-    # ------------------------------------------------------------------
-
-    def test_lm_studio_url_env_var(self, monkeypatch):
-        """LM_STUDIO_URL env var is consumed by the module."""
-        custom_url = "https://my-custom-server.example.com"
-        env = {**_BATCH_ENV, "LM_STUDIO_URL": custom_url}
-        with patch.dict("os.environ", env):
+    def test_tombstone_is_not_a_full_processor(self, monkeypatch):
+        """Confirm tombstone does NOT expose s3_client / LM_STUDIO_URL (desktop processes jobs)."""
+        with patch.dict("os.environ", _BATCH_ENV):
             import importlib
             import lambdas.batch_processor.handler as mod
             importlib.reload(mod)
-            assert mod.LM_STUDIO_URL == custom_url
+        # The real processing happens on the desktop via worker.py, not here.
+        assert not hasattr(mod, "s3_client"), "Tombstone should not have s3_client"
+        assert not hasattr(mod, "LM_STUDIO_URL"), "Tombstone should not have LM_STUDIO_URL"
 

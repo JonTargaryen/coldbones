@@ -163,29 +163,38 @@ export default function App() {
       </header>
 
       {/* Main layout */}
-      <main className="app-main">
-        {/* Left: upload + file list */}
-        <section className="sidebar">
-          <UploadZone onFilesAdded={addFiles} disabled={!isReady || isBusy} />
+      <main className="app-main" id="main-content">
 
-          {files.length > 0 && (
-            <>
-              <FilePreview
-                file={selectedFile}
-                files={files}
-                onSelect={setSelectedFileId}
-                onRemove={removeFile}
-              />
-              <div className="action-row">
-                <button
-                  className="btn-analyze"
-                  disabled={!canAnalyze}
-                  onClick={handleAnalyze}
-                >
-                  {isAnalyzing
-                    ? t.analyzing()
-                    : t.analyzeBtn(uploadedCount > 0 ? uploadedCount : 1)}
-                </button>
+        {/* ── Hero: Visual Analyzer ── */}
+        <section className="hero">
+          <div className="hero-inner">
+            <h2 className="hero-title">Visual Analyzer</h2>
+
+            <UploadZone onFilesAdded={addFiles} disabled={!isReady || isBusy} />
+
+            <div className="hero-cta-row">
+              <button
+                className="btn-analyze-now"
+                disabled={!canAnalyze}
+                onClick={handleAnalyze}
+                aria-label={
+                  isUploading ? 'Uploading file…'
+                  : isAnalyzing ? 'Analyzing…'
+                  : 'Analyze now'
+                }
+              >
+                {/* scan / sparkle icon */}
+                <svg className="btn-analyze-now-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M9.5 6.5v3h-3v-3h3M11 5H5v6h6V5zm-1.5 9.5v3h-3v-3h3M11 13H5v6h6v-6zm6.5-6.5v3h-3v-3h3M19 5h-6v6h6V5zm-6 8h1.5v1.5H13V13zm1.5 1.5H16V16h-1.5v-1.5zM16 13h1.5v1.5H16V13zm-3 3h1.5v1.5H13V16zm1.5 1.5H16V19h-1.5v-1.5zM16 16h1.5v1.5H16V16zm1.5-1.5H19V16h-1.5v-1.5zm0 3H19V19h-1.5v-1.5zM22 7h2v2h-2V7zm0 4h2v2h-2v-2zM2 7H0v2h2V7zm0 4H0v2h2v-2zM7 0v2H9V0H7zm4 0v2h2V0h-2zM7 22v2H9v-2H7zm4 0v2h2v-2h-2z"/>
+                </svg>
+                {isUploading
+                  ? 'Uploading…'
+                  : isAnalyzing
+                  ? t.analyzing()
+                  : 'Analyze Now'}
+              </button>
+
+              {files.length > 0 && (
                 <button
                   className="btn-clear"
                   onClick={clearAll}
@@ -193,21 +202,47 @@ export default function App() {
                 >
                   {t.clearAll}
                 </button>
-              </div>
-            </>
-          )}
+              )}
+            </div>
+
+            {/* Status hint below the button */}
+            {files.length > 0 && !isAnalyzing && !isUploading && (
+              <p className="hero-hint">
+                {uploadedCount > 0
+                  ? `${uploadedCount} file${uploadedCount !== 1 ? 's' : ''} ready · select a file and click Analyze Now`
+                  : selectedFile?.status === 'complete'
+                  ? 'Analysis complete'
+                  : null}
+              </p>
+            )}
+
+            {/* File size note */}
+            <p className="hero-limit-note">{t.uploadHint}</p>
+          </div>
         </section>
 
-        {/* Right: analysis result */}
-        <section className="result-panel">
-          <AnalysisPanel
-            result={selectedFile?.result ?? null}
-            isAnalyzing={isAnalyzing}
-            currentFileName={selectedFile?.file.name}
-            error={selectedFile?.error ?? null}
-            elapsedMs={elapsedMs}
-          />
-        </section>
+        {/* ── Results: file preview + analysis panel ── */}
+        {files.length > 0 && (
+          <section className="results-area" aria-label="Analysis results">
+            <div className="results-sidebar">
+              <FilePreview
+                file={selectedFile}
+                files={files}
+                onSelect={setSelectedFileId}
+                onRemove={removeFile}
+              />
+            </div>
+            <div className="result-panel">
+              <AnalysisPanel
+                result={selectedFile?.result ?? null}
+                isAnalyzing={isAnalyzing}
+                currentFileName={selectedFile?.file.name}
+                error={selectedFile?.error ?? null}
+                elapsedMs={elapsedMs}
+              />
+            </div>
+          </section>
+        )}
       </main>
 
       {/* Slow-mode job tracker */}
