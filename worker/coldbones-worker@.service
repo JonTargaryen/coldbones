@@ -1,0 +1,23 @@
+[Unit]
+Description=Coldbones Desktop Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/coldbones/worker
+EnvironmentFile=/opt/coldbones/worker/.env
+ExecStart=/opt/coldbones/venv/bin/python worker.py
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=coldbones-worker
+
+# Prevent tight restart loops
+StartLimitInterval=120
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

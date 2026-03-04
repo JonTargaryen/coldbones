@@ -1,5 +1,4 @@
 import * as cdk from 'aws-cdk-lib';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { StorageStack } from '../lib/storage-stack';
 import { QueueStack } from '../lib/queue-stack';
@@ -103,22 +102,10 @@ describe('ApiStack', () => {
     const storage = new StorageStack(app, 'TestStorage2', {});
     const queue = new QueueStack(app, 'TestQueue2');
 
-    // Minimal VPC + SG for testing
-    const vpcStack = new cdk.Stack(app, 'TestVpc');
-    const vpc = new ec2.Vpc(vpcStack, 'Vpc', { maxAzs: 1 });
-    const lambdaSg = new ec2.SecurityGroup(vpcStack, 'LambdaSg', { vpc });
-
     const api = new ApiStack(app, 'TestApi', {
       uploadBucket: storage.uploadBucket,
       jobsTable: storage.jobsTable,
       analysisQueue: queue.analysisQueue,
-      notificationTopic: queue.notificationTopic,
-      vpc,
-      lambdaSecurityGroup: lambdaSg,
-      gpuIpParamName: '/coldbones/gpu-ip',
-      gpuPortParamName: '/coldbones/gpu-port',
-      gpuAsgNameParamName: '/coldbones/gpu-asg-name',
-      gpuAsgName: 'coldbones-gpu-asg',
       modelName: 'Qwen/Qwen3.5-35B-A3B-AWQ',
     });
 
@@ -130,27 +117,21 @@ describe('ApiStack', () => {
   });
 
   test('creates Lambda functions for each handler', () => {
-    // presign, orchestrator, router, batch_processor, job_status (+ more)
+    // presign, orchestrator, router, job_status
     const fns = template.findResources('AWS::Lambda::Function', {
       Properties: { Runtime: Match.stringLikeRegexp('python3') },
     });
-    expect(Object.keys(fns).length).toBeGreaterThanOrEqual(5);
+    expect(Object.keys(fns).length).toBeGreaterThanOrEqual(4);
   });
 
-  test('Lambda functions have GPU_IP_PARAM environment variable', () => {
+  test('Lambda functions have DESKTOP_URL_PARAM environment variable', () => {
     const fns = template.findResources('AWS::Lambda::Function', {
       Properties: { Runtime: Match.stringLikeRegexp('python3') },
     });
-    const hasGpuParam = Object.values(fns).some((fn: any) => {
+    const hasDesktopParam = Object.values(fns).some((fn: any) => {
       const envVars = fn.Properties?.Environment?.Variables ?? {};
-      return 'GPU_IP_PARAM' in envVars;
+      return 'DESKTOP_URL_PARAM' in envVars;
     });
-    expect(hasGpuParam).toBe(true);
-  });
-
-  test('creates an SQS event source mapping for batch processor', () => {
-    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
-      EventSourceArn: Match.anyValue(),
-    });
+    expect(hasDesktopParam).toBe(true);
   });
 });
