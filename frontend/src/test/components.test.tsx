@@ -3,7 +3,7 @@
  * Mocks pdfjs-dist and react-dropzone where needed.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import React from 'react'
 import { ModeProvider } from '../contexts/ModeContext'
@@ -343,11 +343,9 @@ describe('JobTracker', () => {
     fileName: 'test.png',
     fileId: 'file-1',
     status: 'queued',
-    result: null,
+    result: undefined,
     estimatedWait: 120,
-    createdAt: new Date().toISOString(),
-    errorMessage: null,
-    pollAttempts: 0,
+    errorMessage: undefined,
     ...overrides,
   })
 
@@ -404,7 +402,7 @@ describe('JobTracker', () => {
 
   it('shows counts header with multiple jobs', () => {
     const jobs: SlowJob[] = [
-      makeJob({ jobId: 'j1', status: 'complete', result: null }),
+      makeJob({ jobId: 'j1', status: 'complete', result: undefined }),
       makeJob({ jobId: 'j2', status: 'queued' }),
       makeJob({ jobId: 'j3', status: 'failed' }),
     ]
@@ -508,7 +506,6 @@ describe('FilePreview', () => {
     file: new File([new Uint8Array(100)], 'img.png', { type: 'image/png' }),
     name: 'img.png',
     size: 100,
-    type: 'image/png',
     previewUrl: 'data:image/png;base64,abc',
     status: 'uploaded',
     progress: 100,

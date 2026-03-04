@@ -2,17 +2,17 @@
 Lambda: analyze-orchestrator
 
 Fast-mode: downloads file from S3, preprocesses it (convert to PNG, handle PDFs),
-then calls the warm GPU instance via OpenAI-compatible /v1/chat/completions endpoint.
+then calls LM Studio on Seratonin via the OpenAI-compatible /v1/chat/completions
+endpoint exposed through Tailscale Funnel.
 
 Designed to complete in under 60 seconds (Lambda timeout set accordingly).
-GPU URL is injected via environment variable pointing to the EC2 internal LB.
 
 Event:
   { "jobId": "<uuid>", "s3Key": "uploads/<uuid>/original.jpg",
     "lang": "en", "filename": "photo.jpg" }
 
 Response:
-  Full analysis JSON (same schema as the local FastAPI /api/analyze endpoint)
+  Full analysis JSON
 """
 
 import base64
@@ -31,13 +31,17 @@ from PIL import Image
 s3_client = boto3.client("s3")
 
 UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
-GPU_ENDPOINT = os.environ.get("GPU_ENDPOINT", "http://localhost:1234/v1")
-GPU_API_KEY = os.environ.get("GPU_API_KEY", "llama.cpp")
-MAX_TOKENS = int(os.environ.get("MAX_INFERENCE_TOKENS", 16384))
-MODEL_NAME = os.environ.get("MODEL_NAME", "")
+LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "https://seratonin.tail40ae2c.ts.net")
+LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
+MAX_TOKENS = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", 20))
 
-client = OpenAI(base_url=GPU_ENDPOINT, api_key=GPU_API_KEY, timeout=55.0)
+# LM Studio OpenAI-compatible client
+client = OpenAI(
+    base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
+    api_key=LM_STUDIO_API_KEY,
+    timeout=55.0,
+)
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -53,7 +57,7 @@ SYSTEM_PROMPT = """You are a precise visual analyst. Examine the provided image 
   "extracted_text": "If there is readable text in the image, transcribe it accurately. If no text, write: No text detected."
 }
 
-Be factual and specific. Do not speculate beyond what is clearly visible. Your final output after any thinking must be ONLY the JSON object."""
+Be factual and specific. Do not speculate beyond what is clearly visible. Your final output must be ONLY the JSON object."""
 
 LANGUAGE_INSTRUCTIONS = {
     "en": "",
@@ -85,18 +89,10 @@ def handler(event: dict, _context: Any) -> dict:
     if not detected_type:
         return _error(400, "Unsupported or corrupt file content")
 
-    expects_pdf = content_type == "application/pdf" or s3_key.lower().endswith(".pdf")
-    if expects_pdf and detected_type != "application/pdf":
-        return _error(400, "File content does not match PDF type")
-    if not expects_pdf and not detected_type.startswith("image/"):
-        return _error(400, "File content is not a valid image")
-
-    # Prefer detected type over metadata/extension for safety
     content_type = detected_type
 
-    # Build image data URLs
+    # Convert to data URLs
     image_data_urls: list[str] = []
-
     if content_type == "application/pdf" or s3_key.lower().endswith(".pdf"):
         image_data_urls = _pdf_to_data_urls(file_bytes, job_id)
     else:
@@ -107,12 +103,11 @@ def handler(event: dict, _context: Any) -> dict:
     if not image_data_urls:
         return _error(400, "Could not extract image data from file")
 
-    # Build message content
+    # Build OpenAI message content
     content: list[dict] = [
         {"type": "image_url", "image_url": {"url": url}}
         for url in image_data_urls
     ]
-
     analysis_text = (
         "Analyze this image thoroughly."
         if len(image_data_urls) == 1
@@ -121,13 +116,12 @@ def handler(event: dict, _context: Any) -> dict:
     lang_instruction = LANGUAGE_INSTRUCTIONS.get(lang, "")
     if lang_instruction:
         analysis_text = f"{analysis_text}\n\n{lang_instruction}"
-
     content.append({"type": "text", "text": analysis_text})
 
-    # Detect model name
-    model_name = MODEL_NAME or _detect_model()
+    # Detect loaded model name
+    model_name = _detect_model()
 
-    # Call GPU inference
+    # Call LM Studio
     try:
         response = client.chat.completions.create(
             model=model_name,
@@ -139,10 +133,9 @@ def handler(event: dict, _context: Any) -> dict:
             temperature=0.6,
         )
     except Exception as e:
-        return _error(502, f"GPU inference failed: {e}")
+        return _error(502, f"LM Studio inference failed: {e}")
 
     elapsed_ms = int((time.time() - start) * 1000)
-
     message = response.choices[0].message
     raw_content = message.content or ""
     finish_reason = response.choices[0].finish_reason or ""
@@ -154,15 +147,12 @@ def handler(event: dict, _context: Any) -> dict:
     except Exception:
         pass
 
-    if not raw_content.strip() and reasoning:
-        result = {
-            "summary": "Model completed reasoning but did not produce a structured answer. Increase MAX_INFERENCE_TOKENS.",
-            "key_observations": _extract_observations(reasoning),
-            "content_classification": "unknown (inference incomplete)",
-            "extracted_text": "No text detected.",
-        }
-    else:
-        result = _parse_model_response(raw_content)
+    result = _parse_model_response(raw_content) if raw_content.strip() else {
+        "summary": "Model did not produce a structured answer. Try again.",
+        "key_observations": [],
+        "content_classification": "unknown",
+        "extracted_text": "No text detected.",
+    }
 
     body = {
         "jobId": job_id,
@@ -176,6 +166,7 @@ def handler(event: dict, _context: Any) -> dict:
         "finish_reason": finish_reason,
         "mode": "fast",
         "model": model_name,
+        "provider": "LM Studio (Seratonin)",
     }
 
     return {"statusCode": 200, "headers": HEADERS, "body": json.dumps(body)}
@@ -198,7 +189,6 @@ def _guess_type(key: str) -> str:
 def _detect_magic_type(raw_bytes: bytes) -> str:
     if len(raw_bytes) < 12:
         return ""
-
     if raw_bytes.startswith(b"%PDF-"):
         return "application/pdf"
     if raw_bytes.startswith(b"\xFF\xD8\xFF"):
@@ -247,13 +237,14 @@ def _pdf_to_data_urls(pdf_bytes: bytes, job_id: str) -> list[str]:
 
 
 def _detect_model() -> str:
+    """Return the first model ID advertised by LM Studio, or a fallback."""
     try:
         models = client.models.list()
         if models.data:
             return models.data[0].id
     except Exception:
         pass
-    return "default"
+    return "qwen3.5"
 
 
 def _parse_model_response(text: str) -> dict:
@@ -270,27 +261,6 @@ def _parse_model_response(text: str) -> dict:
             "content_classification": "unknown",
             "extracted_text": "No text detected.",
         }
-
-
-def _extract_observations(reasoning: str) -> list[str]:
-    observations = []
-    for line in reasoning.split("\n"):
-        line = line.strip()
-        if (
-            line and len(line) > 20
-            and not line.startswith(("Thinking", "Let me"))
-            and (
-                line.startswith(("- ", "* ", "• "))
-                or re.match(r"^\d+[.)]", line)
-                or any(kw in line.lower() for kw in ["i see", "i notice", "the image", "this shows"])
-            )
-        ):
-            cleaned = re.sub(r"^[-*•\d.)]+\s*", "", line).strip()
-            if cleaned and len(cleaned) > 10:
-                observations.append(cleaned)
-        if len(observations) >= 10:
-            break
-    return observations
 
 
 def _error(status: int, message: str) -> dict:

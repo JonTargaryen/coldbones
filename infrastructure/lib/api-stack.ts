@@ -1,105 +1,75 @@
 import * as cdk from 'aws-cdk-lib';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as apigw from 'aws-cdk-lib/aws-apigateway';
-import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
-import * as apigwv2int from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as sns from 'aws-cdk-lib/aws-sns';
-import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as eventsources from 'aws-cdk-lib/aws-lambda-event-sources';
-import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
 export interface ApiStackProps extends cdk.StackProps {
-  vpc: ec2.IVpc;
-  lambdaSecurityGroup: ec2.ISecurityGroup;
   uploadBucket: s3.IBucket;
   jobsTable: dynamodb.ITable;
-  connectionsTable: dynamodb.ITable;
   analysisQueue: sqs.IQueue;
   notificationTopic: sns.ITopic;
-  stateMachine: sfn.IStateMachine;
-  fastAsgName: string;
-  slowAsgName: string;
-  gpuEndpointSsmParam?: string;
-  openaiApiKeyParam?: string;
+  /**
+   * Base URL of the LM Studio instance running Qwen3.5 on Seratonin via
+   * Tailscale Funnel (e.g. 'https://seratonin.tail40ae2c.ts.net').
+   * Lambdas will call <lmStudioUrl>/v1/chat/completions.
+   */
+  lmStudioUrl: string;
+  /** CORS origins. Default: '*' */
+  allowedOrigins?: string[];
 }
 
 export class ApiStack extends cdk.Stack {
   public readonly restApi: apigw.RestApi;
-  public readonly wsApi: apigwv2.WebSocketApi;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
     const lambdaRoot = path.join(__dirname, '../../lambdas');
+    const allowedOrigins = props.allowedOrigins ?? ['*'];
 
-    // ─── Shared Lambda environment ─────────────────────────────────────────
-    const sharedEnv: Record<string, string> = {
-      UPLOAD_BUCKET: props.uploadBucket.bucketName,
-      JOBS_TABLE: props.jobsTable.tableName,
-      CONNECTIONS_TABLE: props.connectionsTable.tableName,
-      ANALYZE_QUEUE_URL: props.analysisQueue.queueUrl,
-      SNS_TOPIC_ARN: props.notificationTopic.topicArn,
-      STATE_MACHINE_ARN: props.stateMachine.stateMachineArn,
-      FAST_ASG_NAME: props.fastAsgName,
-      SLOW_ASG_NAME: props.slowAsgName,
-      GPU_ENDPOINT: props.gpuEndpointSsmParam
-        ? `ssm:${props.gpuEndpointSsmParam}`
-        : 'http://localhost:8080',
-      POWERTOOLS_SERVICE_NAME: 'coldbones',
-    };
-
-    // ─── Shared Lambda execution role ─────────────────────────────────────
+    // ─── Shared Lambda execution role ──────────────────────────────────────
     const lambdaRole = new iam.Role(this, 'LambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName(
-          'service-role/AWSLambdaVPCAccessExecutionRole',
-        ),
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
         iam.ManagedPolicy.fromAwsManagedPolicyName('AWSXRayDaemonWriteAccess'),
       ],
     });
 
-    // Grants
+    // S3, DynamoDB, SQS, SNS grants
     props.uploadBucket.grantReadWrite(lambdaRole);
     props.jobsTable.grantReadWriteData(lambdaRole);
-    props.connectionsTable.grantReadWriteData(lambdaRole);
     props.analysisQueue.grantSendMessages(lambdaRole);
     props.analysisQueue.grantConsumeMessages(lambdaRole);
     props.notificationTopic.grantPublish(lambdaRole);
-    props.stateMachine.grantStartExecution(lambdaRole);
 
-    lambdaRole.addToPolicy(new iam.PolicyStatement({
-      actions: [
-        'autoscaling:DescribeAutoScalingGroups',
-        'autoscaling:SetDesiredCapacity',
-        'autoscaling:TerminateInstanceInAutoScalingGroup',
-      ],
-      resources: ['*'],
-    }));
-
-    lambdaRole.addToPolicy(new iam.PolicyStatement({
-      actions: ['ec2:DescribeInstances'],
-      resources: ['*'],
-    }));
-
-    if (props.openaiApiKeyParam) {
-      lambdaRole.addToPolicy(new iam.PolicyStatement({
-        actions: ['ssm:GetParameter'],
-        resources: [
-          `arn:aws:ssm:${this.region}:${this.account}:parameter${props.openaiApiKeyParam}`,
-        ],
-      }));
-    }
+    // ─── Shared env ────────────────────────────────────────────────────────
+    const sharedEnv: Record<string, string> = {
+      UPLOAD_BUCKET: props.uploadBucket.bucketName,
+      JOBS_TABLE: props.jobsTable.tableName,
+      ANALYZE_QUEUE_URL: props.analysisQueue.queueUrl,
+      SNS_TOPIC_ARN: props.notificationTopic.topicArn,
+      LM_STUDIO_URL: props.lmStudioUrl,
+      // LM Studio uses OpenAI-compat API — no real key needed, but some
+      // clients require a non-empty value.
+      LM_STUDIO_API_KEY: 'lm-studio',
+      POWERTOOLS_SERVICE_NAME: 'coldbones',
+    };
 
     // ─── Lambda helper ─────────────────────────────────────────────────────
+    // NOTE: logRetention is intentionally omitted here — adding it with a shared
+    // role creates a CloudFormation circular dependency (the retention custom
+    // resource adds the function ARN to the role's policy, but the function
+    // already depends on that role).  Retention is managed via explicit LogGroup
+    // resources below instead.
     const fn = (id: string, dir: string, extra?: Partial<lambda.FunctionProps>) =>
       new lambda.Function(this, id, {
         runtime: lambda.Runtime.PYTHON_3_12,
@@ -107,13 +77,9 @@ export class ApiStack extends cdk.Stack {
         code: lambda.Code.fromAsset(path.join(lambdaRoot, dir)),
         timeout: cdk.Duration.minutes(5),
         memorySize: 512,
-        environment: sharedEnv,
+        environment: { ...sharedEnv },
         role: lambdaRole,
-        vpc: props.vpc,
-        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        securityGroups: [props.lambdaSecurityGroup],
         tracing: lambda.Tracing.ACTIVE,
-        logRetention: logs.RetentionDays.ONE_WEEK,
         ...extra,
       });
 
@@ -121,50 +87,32 @@ export class ApiStack extends cdk.Stack {
 
     const presignedUrlFn = fn('PresignedUrlFn', 'get_presigned_url', {
       timeout: cdk.Duration.seconds(10),
-      memorySize: 256,
-    });
-
-    const analyzeRouterFn = fn('AnalyzeRouterFn', 'analyze_router', {
-      timeout: cdk.Duration.minutes(10),
+      memorySize: 128,
     });
 
     const analyzeOrchestratorFn = fn('AnalyzeOrchestratorFn', 'analyze_orchestrator', {
-      timeout: cdk.Duration.minutes(10),
-    });
-
-    // Allow analyze_router to invoke analyze_orchestrator synchronously
-    analyzeOrchestratorFn.grantInvoke(lambdaRole);
-    sharedEnv['ORCHESTRATOR_FUNCTION'] = analyzeOrchestratorFn.functionName;
-    analyzeRouterFn.addEnvironment(
-      'ORCHESTRATOR_FUNCTION',
-      analyzeOrchestratorFn.functionName,
-    );
-
-    const batchProcessorFn = fn('BatchProcessorFn', 'batch_processor', {
-      timeout: cdk.Duration.minutes(15),
-      memorySize: 1024,
-    });
-
-    const lifecycleManagerFn = fn('LifecycleManagerFn', 'lifecycle_manager', {
       timeout: cdk.Duration.minutes(5),
+      memorySize: 512,
     });
 
-    const slowQueueStarterFn = fn('SlowQueueStarterFn', 'slow_queue_starter', {
-      timeout: cdk.Duration.minutes(1),
+    const analyzeRouterFn = fn('AnalyzeRouterFn', 'analyze_router', {
+      timeout: cdk.Duration.minutes(6),
       memorySize: 256,
     });
+    // grantInvoke(lambdaRole) would create a cycle (function depends on role;
+    // role policy would reference the function ARN).  Use a wildcard instead.
+    lambdaRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: [`arn:aws:lambda:${this.region}:${this.account}:function:*`],
+    }));
+    analyzeRouterFn.addEnvironment('ORCHESTRATOR_FUNCTION', analyzeOrchestratorFn.functionName);
 
-    slowQueueStarterFn.addEnvironment(
-      'LIFECYCLE_FUNCTION_ARN',
-      lifecycleManagerFn.functionArn,
-    );
-    slowQueueStarterFn.addEnvironment(
-      'BATCH_PROCESSOR_FUNCTION_ARN',
-      batchProcessorFn.functionArn,
-    );
+    const batchProcessorFn = fn('BatchProcessorFn', 'batch_processor', {
+      timeout: cdk.Duration.minutes(10),
+      memorySize: 512,
+    });
 
-    // SQS trigger for Step Functions starter
-    slowQueueStarterFn.addEventSource(
+    batchProcessorFn.addEventSource(
       new eventsources.SqsEventSource(props.analysisQueue as sqs.Queue, {
         batchSize: 1,
         enabled: true,
@@ -172,60 +120,12 @@ export class ApiStack extends cdk.Stack {
       }),
     );
 
-    props.stateMachine.grantStartExecution(slowQueueStarterFn);
-
-    // State machine definition uses dynamic task targets from execution input,
-    // so we grant explicit permissions to invoke/publish/send from its role.
-    (props.stateMachine as sfn.StateMachine).addToRolePolicy(new iam.PolicyStatement({
-      actions: ['lambda:InvokeFunction'],
-      resources: [lifecycleManagerFn.functionArn, batchProcessorFn.functionArn],
-    }));
-    (props.stateMachine as sfn.StateMachine).addToRolePolicy(new iam.PolicyStatement({
-      actions: ['sns:Publish'],
-      resources: [props.notificationTopic.topicArn],
-    }));
-    (props.stateMachine as sfn.StateMachine).addToRolePolicy(new iam.PolicyStatement({
-      actions: ['sqs:SendMessage', 'sqs:GetQueueAttributes'],
-      resources: [props.analysisQueue.queueArn],
-    }));
-
     const jobStatusFn = fn('JobStatusFn', 'job_status', {
       timeout: cdk.Duration.seconds(10),
-      memorySize: 256,
+      memorySize: 128,
     });
 
-    const wsConnectFn = fn('WsConnectFn', 'ws_connect', {
-      timeout: cdk.Duration.seconds(10),
-      memorySize: 256,
-      vpc: undefined, // WS connect/disconnect don't need VPC
-      vpcSubnets: undefined,
-      securityGroups: undefined,
-    });
-    wsConnectFn.addEnvironment('CONNECTIONS_TABLE', props.connectionsTable.tableName);
-
-    const wsDisconnectFn = fn('WsDisconnectFn', 'ws_disconnect', {
-      timeout: cdk.Duration.seconds(10),
-      memorySize: 256,
-      vpc: undefined,
-      vpcSubnets: undefined,
-      securityGroups: undefined,
-    });
-    wsDisconnectFn.addEnvironment('CONNECTIONS_TABLE', props.connectionsTable.tableName);
-
-    const wsNotifyFn = fn('WsNotifyFn', 'ws_notify', {
-      timeout: cdk.Duration.minutes(1),
-      memorySize: 256,
-      vpc: undefined,
-      vpcSubnets: undefined,
-      securityGroups: undefined,
-    });
-
-    // SNS → ws_notify
-    props.notificationTopic.addSubscription(
-      new snsSubscriptions.LambdaSubscription(wsNotifyFn),
-    );
-
-    // ─── REST API (API Gateway) ────────────────────────────────────────────
+    // ─── REST API ──────────────────────────────────────────────────────────
     const accessLog = new logs.LogGroup(this, 'ApiAccessLog', {
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -233,89 +133,72 @@ export class ApiStack extends cdk.Stack {
 
     this.restApi = new apigw.RestApi(this, 'RestApi', {
       restApiName: 'coldbones-api',
-      description: 'Coldbones REST API',
+      description: 'Coldbones REST API — LM Studio inference via Tailscale Funnel',
       deployOptions: {
         stageName: 'v1',
-        throttlingRateLimit: 10,
-        throttlingBurstLimit: 100,
+        throttlingRateLimit: 20,
+        throttlingBurstLimit: 50,
         accessLogDestination: new apigw.LogGroupLogDestination(accessLog),
         accessLogFormat: apigw.AccessLogFormat.jsonWithStandardFields(),
         tracingEnabled: true,
         metricsEnabled: true,
       },
       defaultCorsPreflightOptions: {
-        allowOrigins: apigw.Cors.ALL_ORIGINS,
+        allowOrigins: allowedOrigins,
         allowMethods: apigw.Cors.ALL_METHODS,
         allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
         maxAge: cdk.Duration.hours(1),
       },
+      binaryMediaTypes: ['*/*'],
     });
 
-    // POST /presign
-    this.restApi.root
-      .addResource('presign')
-      .addMethod('POST', new apigw.LambdaIntegration(presignedUrlFn));
+    const api = this.restApi.root.addResource('api');
 
-    // POST /analyze
-    this.restApi.root
-      .addResource('analyze')
-      .addMethod('POST', new apigw.LambdaIntegration(analyzeRouterFn));
-
-    // GET /status/{jobId}
-    const statusResource = this.restApi.root.addResource('status');
-    statusResource
-      .addResource('{jobId}')
-      .addMethod('GET', new apigw.LambdaIntegration(jobStatusFn));
-
-    // GET /health
-    this.restApi.root.addResource('health').addMethod(
-      'GET',
-      new apigw.MockIntegration({
-        integrationResponses: [{ statusCode: '200', responseTemplates: { 'application/json': '{"status":"ok"}' } }],
-        passthroughBehavior: apigw.PassthroughBehavior.NEVER,
-        requestTemplates: { 'application/json': '{"statusCode":200}' },
-      }),
-      { methodResponses: [{ statusCode: '200' }] },
-    );
-
-    // ─── WebSocket API ─────────────────────────────────────────────────────
-    this.wsApi = new apigwv2.WebSocketApi(this, 'WsApi', {
-      apiName: 'coldbones-ws',
-      connectRouteOptions: {
-        integration: new apigwv2int.WebSocketLambdaIntegration('WsConnect', wsConnectFn),
-      },
-      disconnectRouteOptions: {
-        integration: new apigwv2int.WebSocketLambdaIntegration('WsDisconnect', wsDisconnectFn),
-      },
-      defaultRouteOptions: {
-        integration: new apigwv2int.WebSocketLambdaIntegration('WsDefault', wsNotifyFn),
-      },
+    // GET /api/health — checks that LM Studio is reachable
+    const health = api.addResource('health');
+    health.addMethod('GET', new apigw.MockIntegration({
+      integrationResponses: [{
+        statusCode: '200',
+        responseTemplates: {
+          'application/json': JSON.stringify({
+            status: 'ok',
+            model: 'qwen3.5',
+            provider: 'LM Studio (Seratonin)',
+            lm_studio_url: props.lmStudioUrl,
+            model_loaded: true,
+          }),
+        },
+      }],
+      passthroughBehavior: apigw.PassthroughBehavior.NEVER,
+      requestTemplates: { 'application/json': '{"statusCode": 200}' },
+    }), {
+      methodResponses: [{ statusCode: '200' }],
     });
 
-    const wsStage = new apigwv2.WebSocketStage(this, 'WsStage', {
-      webSocketApi: this.wsApi,
-      stageName: 'v1',
-      autoDeploy: true,
-    });
+    // POST /api/presign
+    const presign = api.addResource('presign');
+    presign.addMethod('POST', new apigw.LambdaIntegration(presignedUrlFn));
 
-    // Give ws_notify AGA management permission
-    wsNotifyFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['execute-api:ManageConnections'],
-      resources: [
-        `arn:aws:execute-api:${this.region}:${this.account}:${this.wsApi.apiId}/${wsStage.stageName}/*`,
-      ],
+    // POST /api/analyze
+    const analyze = api.addResource('analyze');
+    analyze.addMethod('POST', new apigw.LambdaIntegration(analyzeRouterFn, {
+      timeout: cdk.Duration.seconds(29),
     }));
 
-    wsNotifyFn.addEnvironment('WS_GATEWAY_URL', wsStage.callbackUrl);
+    // GET /api/status/{jobId}
+    const status = api.addResource('status');
+    const statusJobId = status.addResource('{jobId}');
+    statusJobId.addMethod('GET', new apigw.LambdaIntegration(jobStatusFn));
 
     // ─── Outputs ───────────────────────────────────────────────────────────
-    new cdk.CfnOutput(this, 'RestApiUrl', {
+    new cdk.CfnOutput(this, 'ApiUrl', {
       value: this.restApi.url,
+      description: 'API Gateway URL — set VITE_API_BASE_URL to this value',
       exportName: 'ColdbonesApiUrl',
     });
-    new cdk.CfnOutput(this, 'WsApiUrl', {
-      value: wsStage.url,
-      exportName: 'ColdbonesWsUrl',
+    new cdk.CfnOutput(this, 'LmStudioUrl', {
+      value: props.lmStudioUrl,
+      description: 'LM Studio Tailscale Funnel URL used by Lambdas',
     });
   }
 }

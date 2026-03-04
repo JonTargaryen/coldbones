@@ -1,14 +1,16 @@
 [run]
+concurrency = thread
 source = .
 omit =
     tests/*
-    */__pycache__/*
-    */site-packages/*
     conftest.py
+    */site-packages/*
 
 [report]
+omit =
+    tests/*
+    conftest.py
+    */site-packages/*
 exclude_lines =
     pragma: no cover
     if __name__ == .__main__.:
-    raise NotImplementedError
-    \.\.\.

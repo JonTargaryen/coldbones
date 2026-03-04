@@ -2,7 +2,7 @@
  * Tests for src/utils/validation.ts
  * Targets 100% line, branch, and function coverage.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   isAcceptedType,
   isImage,

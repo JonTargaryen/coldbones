@@ -3,22 +3,70 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cfOrigins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import { Construct } from 'constructs';
 
-export class StorageStack extends cdk.Stack {
-  /** S3 bucket for user-uploaded files */
-  public readonly uploadBucket: s3.Bucket;
-  /** S3 bucket that hosts the compiled React SPA */
-  public readonly siteBucket: s3.Bucket;
-  /** CloudFront distribution serving the SPA */
-  public readonly distribution: cloudfront.Distribution;
-  /** DynamoDB table tracking analysis jobs */
-  public readonly jobsTable: dynamodb.Table;
-  /** DynamoDB table tracking WebSocket connections */
-  public readonly connectionsTable: dynamodb.Table;
+export interface StorageStackProps extends cdk.StackProps {
+  /**
+   * Root domain name registered at Squarespace, e.g. "omlahiri.com".
+   * When provided, a Route 53 hosted zone + ACM cert will be created and
+   * CloudFront will serve the app on app.<domainName> and www.<domainName>.
+   *
+   * Leave undefined to skip custom domain setup — the CloudFront .cloudfront.net
+   * URL still works perfectly for testing.
+   */
+  domainName?: string;
+  /** Sub-domain prefix. Defaults to "app" → app.omlahiri.com */
+  appSubdomain?: string;
+}
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+export class StorageStack extends cdk.Stack {
+  public readonly uploadBucket: s3.Bucket;
+  public readonly siteBucket: s3.Bucket;
+  public readonly distribution: cloudfront.Distribution;
+  public readonly jobsTable: dynamodb.Table;
+  public readonly hostedZone?: route53.HostedZone;
+  public readonly certificate?: acm.Certificate;
+  /** https://app.omlahiri.com  OR  https://xxxx.cloudfront.net */
+  public readonly appUrl: string;
+
+  constructor(scope: Construct, id: string, props: StorageStackProps = {}) {
     super(scope, id, props);
+
+    const { domainName, appSubdomain = 'app' } = props;
+    const appFqdn = domainName ? `${appSubdomain}.${domainName}` : undefined;
+
+    // ─── Route 53 Hosted Zone + ACM Cert ──────────────────────────────────
+    // Only created when domainName is provided.
+    // After first deploy: go to Squarespace Domains → Custom Nameservers and
+    // paste the 4 NS values from the HostedZoneNameServers stack output.
+    let hz: route53.HostedZone | undefined;
+    let cert: acm.Certificate | undefined;
+
+    if (domainName) {
+      hz = new route53.HostedZone(this, 'HostedZone', {
+        zoneName: domainName,
+        comment: 'Coldbones production domain',
+      });
+      this.hostedZone = hz;
+
+      // Certificate must be in us-east-1 for CloudFront — ensure the stack
+      // is deployed to us-east-1 (the cdk.json env default).
+      cert = new acm.Certificate(this, 'Certificate', {
+        domainName: domainName,
+        subjectAlternativeNames: [`*.${domainName}`],
+        validation: acm.CertificateValidation.fromDns(hz),
+      });
+      this.certificate = cert;
+
+      new cdk.CfnOutput(this, 'HostedZoneNameServers', {
+        value: cdk.Fn.join(', ', hz.hostedZoneNameServers!),
+        description:
+          '→ Squarespace Domains → omlahiri.com → DNS → Name Servers → Custom → paste these 4 values',
+      });
+    }
 
     // ─── S3: Upload Bucket ─────────────────────────────────────────────────
     this.uploadBucket = new s3.Bucket(this, 'UploadBucket', {
@@ -34,12 +82,8 @@ export class StorageStack extends cdk.Stack {
       ],
       cors: [
         {
-          allowedMethods: [
-            s3.HttpMethods.PUT,
-            s3.HttpMethods.GET,
-            s3.HttpMethods.HEAD,
-          ],
-          allowedOrigins: ['*'], // tightened by CORS in ApiStack
+          allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.HEAD],
+          allowedOrigins: ['*'],
           allowedHeaders: ['*'],
           maxAge: 3600,
         },
@@ -48,48 +92,41 @@ export class StorageStack extends cdk.Stack {
     });
 
     // ─── S3: Static Site Bucket ────────────────────────────────────────────
+    // Versioning disabled — static SPA build artifacts are fully reproducible.
     this.siteBucket = new s3.Bucket(this, 'SiteBucket', {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      versioned: true,
+      versioned: false,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // ─── CloudFront ────────────────────────────────────────────────────────
+    // ─── CloudFront Distribution ───────────────────────────────────────────
     const oac = new cloudfront.S3OriginAccessControl(this, 'OAC', {
       description: 'Coldbones SPA OAC',
     });
 
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       defaultBehavior: {
-        origin: cfOrigins.S3BucketOrigin.withOriginAccessControl(
-          this.siteBucket,
-          { originAccessControl: oac },
-        ),
-        viewerProtocolPolicy:
-          cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        origin: cfOrigins.S3BucketOrigin.withOriginAccessControl(this.siteBucket, {
+          originAccessControl: oac,
+        }),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         compress: true,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
       },
       defaultRootObject: 'index.html',
       errorResponses: [
-        {
-          httpStatus: 403,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-          ttl: cdk.Duration.minutes(0),
-        },
-        {
-          httpStatus: 404,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-          ttl: cdk.Duration.minutes(0),
-        },
+        { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: cdk.Duration.minutes(0) },
+        { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: cdk.Duration.minutes(0) },
       ],
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      ...(appFqdn && cert
+        ? { domainNames: [appFqdn, `www.${domainName}`, domainName!], certificate: cert }
+        : {}),
     });
 
-    // OAC bucket policy
+    // S3 bucket policy: allow CloudFront OAC
     this.siteBucket.addToResourcePolicy(
       new cdk.aws_iam.PolicyStatement({
         actions: ['s3:GetObject'],
@@ -103,18 +140,39 @@ export class StorageStack extends cdk.Stack {
       }),
     );
 
-    // ─── DynamoDB: Jobs ────────────────────────────────────────────────────
+    // ─── Route 53 Alias Records ────────────────────────────────────────────
+    if (domainName && appFqdn && hz) {
+      const cfTarget = new route53Targets.CloudFrontTarget(this.distribution);
+
+      new route53.ARecord(this, 'AppRecord', {
+        zone: hz,
+        recordName: appSubdomain,
+        target: route53.RecordTarget.fromAlias(cfTarget),
+      });
+      new route53.ARecord(this, 'WwwRecord', {
+        zone: hz,
+        recordName: 'www',
+        target: route53.RecordTarget.fromAlias(cfTarget),
+      });
+      new route53.ARecord(this, 'ApexRecord', {
+        zone: hz,
+        recordName: '',
+        target: route53.RecordTarget.fromAlias(cfTarget),
+      });
+    }
+
+    // ─── DynamoDB: Analysis Jobs ───────────────────────────────────────────
     this.jobsTable = new dynamodb.Table(this, 'JobsTable', {
       tableName: 'coldbones-jobs',
       partitionKey: { name: 'jobId', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,  // ~$1.25/million writes
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       timeToLiveAttribute: 'ttl',
-      pointInTimeRecovery: true,
+      // PITR disabled — jobs are ephemeral, no recovery value vs ~$0.20/GB/month cost.
+      pointInTimeRecovery: false,
     });
 
-    // GSI: query jobs by userId
     this.jobsTable.addGlobalSecondaryIndex({
       indexName: 'userId-createdAt-index',
       partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
@@ -122,54 +180,20 @@ export class StorageStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // GSI: query jobs by status (for batch processor)
-    this.jobsTable.addGlobalSecondaryIndex({
-      indexName: 'status-createdAt-index',
-      partitionKey: { name: 'status', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'createdAt', type: dynamodb.AttributeType.STRING },
-      projectionType: dynamodb.ProjectionType.ALL,
-    });
-
-    // ─── DynamoDB: WebSocket Connections ───────────────────────────────────
-    this.connectionsTable = new dynamodb.Table(this, 'ConnectionsTable', {
-      tableName: 'coldbones-ws-connections',
-      partitionKey: {
-        name: 'connectionId',
-        type: dynamodb.AttributeType.STRING,
-      },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      timeToLiveAttribute: 'ttl',
-    });
-
-    // GSI: look up connections by jobId
-    this.connectionsTable.addGlobalSecondaryIndex({
-      indexName: 'jobId-index',
-      partitionKey: { name: 'jobId', type: dynamodb.AttributeType.STRING },
-      projectionType: dynamodb.ProjectionType.ALL,
-    });
+    this.appUrl = appFqdn
+      ? `https://${appFqdn}`
+      : `https://${this.distribution.distributionDomainName}`;
 
     // ─── Outputs ───────────────────────────────────────────────────────────
-    new cdk.CfnOutput(this, 'UploadBucketName', {
-      value: this.uploadBucket.bucketName,
-      exportName: 'ColdbonesUploadBucket',
+    new cdk.CfnOutput(this, 'UploadBucketName', { value: this.uploadBucket.bucketName, exportName: 'ColdbonesUploadBucket' });
+    new cdk.CfnOutput(this, 'SiteBucketName', { value: this.siteBucket.bucketName, exportName: 'ColdbonesSiteBucket' });
+    new cdk.CfnOutput(this, 'DistributionId', { value: this.distribution.distributionId, exportName: 'ColdbonesDistributionId' });
+    new cdk.CfnOutput(this, 'CloudFrontDomain', {
+      value: this.distribution.distributionDomainName,
+      description: 'Usable immediately for testing before DNS is switched',
+      exportName: 'ColdbonesCloudfrontDomain',
     });
-    new cdk.CfnOutput(this, 'SiteBucketName', {
-      value: this.siteBucket.bucketName,
-      exportName: 'ColdbonesSiteBucket',
-    });
-    new cdk.CfnOutput(this, 'DistributionId', {
-      value: this.distribution.distributionId,
-      exportName: 'ColdbonesDistributionId',
-    });
-    new cdk.CfnOutput(this, 'SiteUrl', {
-      value: `https://${this.distribution.distributionDomainName}`,
-      exportName: 'ColdbonesSiteUrl',
-    });
-    new cdk.CfnOutput(this, 'JobsTableName', {
-      value: this.jobsTable.tableName,
-      exportName: 'ColdbonesJobsTable',
-    });
+    new cdk.CfnOutput(this, 'AppUrl', { value: this.appUrl, exportName: 'ColdbonesAppUrl' });
+    new cdk.CfnOutput(this, 'JobsTableName', { value: this.jobsTable.tableName, exportName: 'ColdbonesJobsTable' });
   }
 }

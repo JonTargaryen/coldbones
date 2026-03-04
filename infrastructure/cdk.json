@@ -38,19 +38,13 @@
     "@aws-cdk/aws-codedeploy:removeAlarmsFromDeploymentGroup": true,
 
     "coldbones": {
-      "overnightShutdownHour": 23,
-      "morningWarmupHour": 7,
-      "timezone": "America/New_York",
-      "enableWeekendFastShutdown": false,
-      "fastGpuInstanceType": "g5.2xlarge",
-      "slowGpuInstanceType": "g5.2xlarge",
-      "modelQuant": "Q4_K_M",
-      "maxInferenceTokens": 16384,
+      "domainName": "omlahiri.com",
+      "appSubdomain": "app",
       "maxFileSize": 20971520,
       "maxPdfPages": 20,
-      "apiThrottleRateLimit": 10,
+      "apiThrottleRateLimit": 20,
       "apiThrottleBurstLimit": 50,
-      "budgetAlertThresholdUsd": 200
+      "lmStudioUrl": "https://seratonin.tail40ae2c.ts.net"
     }
   }
 }

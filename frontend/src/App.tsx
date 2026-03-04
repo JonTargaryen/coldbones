@@ -1,332 +1,197 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { ModeProvider, useMode } from './contexts/ModeContext';
-import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
-import { useUpload } from './hooks/useUpload';
-import { useAnalysis } from './hooks/useAnalysis';
-import { useSlowAnalysis } from './hooks/useSlowAnalysis';
-import { useWebSocket } from './hooks/useWebSocket';
-import type { AnalysisResult } from './types';
+import { useState, useEffect, useRef } from 'react';
+import './App.css';
 import { UploadZone } from './components/UploadZone';
 import { FilePreview } from './components/FilePreview';
 import { AnalysisPanel } from './components/AnalysisPanel';
-import { ModeToggle } from './components/ModeToggle';
 import { JobTracker } from './components/JobTracker';
+import { ModeToggle } from './components/ModeToggle';
 import { LanguagePicker } from './components/LanguagePicker';
-import { validateBatchSize } from './utils/validation';
-import './App.css';
+import { useUpload } from './hooks/useUpload';
+import { useAnalysis } from './hooks/useAnalysis';
+import { useSlowAnalysis } from './hooks/useSlowAnalysis';
+import { useMode } from './contexts/ModeContext';
+import { useLanguage } from './contexts/LanguageContext';
+import type { HealthResponse } from './types';
 
-type HealthStatus = 'checking' | 'online' | 'model-missing' | 'offline';
+const API = import.meta.env.VITE_API_BASE_URL ?? '';
 
-interface HealthState {
-  status: HealthStatus;
-  latencyMs: number | null;
-  modelName: string;
-  lastChecked: number;
-  consecutiveFailures: number;
-}
-
-function useHealthCheck() {
-  const [health, setHealth] = useState<HealthState>({
-    status: 'checking',
-    latencyMs: null,
-    modelName: '',
-    lastChecked: 0,
-    consecutiveFailures: 0,
-  });
-
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout>;
-    let cancelled = false;
-
-    const checkHealth = async () => {
-      const start = performance.now();
-      try {
-        const controller = new AbortController();
-        const abortTimeout = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch('/api/health', { signal: controller.signal });
-        clearTimeout(abortTimeout);
-        const elapsed = Math.round(performance.now() - start);
-
-        if (res.ok) {
-          const data = await res.json();
-          if (!cancelled) {
-            setHealth({
-              status: data.model_loaded ? 'online' : 'model-missing',
-              latencyMs: elapsed,
-              modelName: data.model_name || '',
-              lastChecked: Date.now(),
-              consecutiveFailures: 0,
-            });
-          }
-        } else {
-          if (!cancelled) {
-            setHealth(prev => ({
-              ...prev,
-              status: 'offline',
-              latencyMs: null,
-              lastChecked: Date.now(),
-              consecutiveFailures: prev.consecutiveFailures + 1,
-            }));
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          setHealth(prev => ({
-            ...prev,
-            status: 'offline',
-            latencyMs: null,
-            lastChecked: Date.now(),
-            consecutiveFailures: prev.consecutiveFailures + 1,
-          }));
-        }
-      }
-
-      if (!cancelled) {
-        const nextInterval = health.status === 'offline' ? 2000 : 5000;
-        timeoutId = setTimeout(checkHealth, nextInterval);
-      }
-    };
-
-    checkHealth();
-    return () => { cancelled = true; clearTimeout(timeoutId); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return health;
-}
-
-function AppContent() {
+export default function App() {
   const { mode } = useMode();
   const { lang, t } = useLanguage();
-  const { files, addFiles, removeFile, clearFiles, updateFile } = useUpload();
-  const { results, isAnalyzing, currentFileId, error, analyzeAll, clearResults } = useAnalysis();
-  const { jobs, isSubmitting, submitSlowJob, applyJobEvent, clearJobs } = useSlowAnalysis();
+
+  const { files, setFiles, addFiles, removeFile, clearAll } = useUpload();
+  const { analyze } = useAnalysis(setFiles);
+  const { slowJobs, enqueue } = useSlowAnalysis(setFiles);
+
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const health = useHealthCheck();
 
-  useWebSocket({
-    onMessage: (msg) => {
-      if (!msg.jobId) return;
-      if (msg.type === 'job_complete') {
-        applyJobEvent({
-          jobId: msg.jobId,
-          status: 'complete',
-          result: msg.result as AnalysisResult | undefined,
-        });
-      } else if (msg.type === 'job_failed') {
-        applyJobEvent({
-          jobId: msg.jobId,
-          status: 'failed',
-          error: msg.error,
-        });
-      }
-    },
-  });
-
+  // Health check on mount and every 30s
   useEffect(() => {
-    if (isAnalyzing) {
-      setElapsedMs(0);
-      timerRef.current = setInterval(() => {
-        setElapsedMs(prev => prev + 100);
-      }, 100);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+    const check = async () => {
+      try {
+        const res = await fetch(`${API}/api/health`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: HealthResponse = await res.json();
+        setHealth(data);
+        setHealthError(null);
+      } catch (err) {
+        setHealthError(err instanceof Error ? err.message : 'Unreachable');
+        setHealth(null);
       }
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isAnalyzing]);
+    check();
+    const id = setInterval(check, 30_000);
+    return () => clearInterval(id);
+  }, []);
 
+  // Auto-select first file when none selected
   useEffect(() => {
-    if (files.length > 0 && !selectedFileId) {
+    if (!selectedFileId && files.length > 0) {
       setSelectedFileId(files[0].id);
     }
-    if (files.length === 0) {
-      setSelectedFileId(null);
+    if (selectedFileId && !files.find((f) => f.id === selectedFileId)) {
+      setSelectedFileId(files.length > 0 ? files[0].id : null);
     }
   }, [files, selectedFileId]);
 
-  const handleFilesAdded = useCallback((newFiles: File[]) => {
-    const added = addFiles(newFiles);
-    setSubmissionError(null);
-    if (added.length > 0 && !selectedFileId) {
-      setSelectedFileId(added[0].id);
-    }
-  }, [addFiles, selectedFileId]);
+  // Elapsed ms timer while analyzing
+  useEffect(() => {
+    const selectedFile = files.find((f) => f.id === selectedFileId);
+    const isAnalyzing = selectedFile?.status === 'analyzing';
 
-  const handleRemove = useCallback((fileId: string) => {
-    removeFile(fileId);
-    if (selectedFileId === fileId) {
-      const remaining = files.filter(f => f.id !== fileId);
-      setSelectedFileId(remaining.length > 0 ? remaining[0].id : null);
-    }
-  }, [removeFile, selectedFileId, files]);
-
-  const handleAnalyze = useCallback(async () => {
-    const analyzableFiles = files.filter(
-      f => f.status !== 'error' && f.status !== 'uploading' && f.status !== 'pending',
-    );
-    if (analyzableFiles.length === 0) return;
-
-    const batchError = validateBatchSize(analyzableFiles.length, mode);
-    if (batchError) {
-      setSubmissionError(batchError);
-      return;
+    if (isAnalyzing && !timerRef.current) {
+      const start = Date.now();
+      timerRef.current = setInterval(() => setElapsedMs(Date.now() - start), 100);
+    } else if (!isAnalyzing && timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+      if (selectedFile?.status === 'complete' && selectedFile.result?.processingTimeMs) {
+        setElapsedMs(selectedFile.result.processingTimeMs);
+      }
     }
 
-    setSubmissionError(null);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [files, selectedFileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
+  const isReady = health?.model_loaded === true;
+  const isUploading = selectedFile?.status === 'uploading';
+  const isAnalyzing = selectedFile?.status === 'analyzing';
+  const isBusy = isUploading || isAnalyzing;
+
+  const canAnalyze = selectedFile?.status === 'uploaded' && isReady && !isBusy;
+
+  const handleAnalyze = async () => {
+    if (!selectedFile?.s3Key) return;
+    setElapsedMs(0);
     if (mode === 'slow') {
-      await submitSlowJob(analyzableFiles, lang);
+      await enqueue(selectedFile.id, selectedFile.s3Key, selectedFile.file.name, lang);
     } else {
-      await analyzeAll(analyzableFiles, mode, (fileId, status) => {
-        updateFile(fileId, { status });
-      }, lang);
+      await analyze(selectedFile.id, selectedFile.s3Key, selectedFile.file.name, lang);
     }
-  }, [files, mode, analyzeAll, updateFile, lang, submitSlowJob]);
+  };
 
-  const handleClear = useCallback(() => {
-    clearFiles();
-    clearResults();
-    clearJobs();
-    setSubmissionError(null);
-    setSelectedFileId(null);
-  }, [clearFiles, clearResults, clearJobs]);
-
-  const selectedFile = files.find(f => f.id === selectedFileId) ?? null;
-  const selectedResult = selectedFileId ? results.get(selectedFileId) ?? null : null;
-  const currentFile = currentFileId ? files.find(f => f.id === currentFileId) : null;
-  const analyzableFileCount = files.filter(
-    f => f.status !== 'error' && f.status !== 'uploading' && f.status !== 'pending',
-  ).length;
-  const hasUploadsInProgress = files.some(f => f.status === 'uploading' || f.status === 'pending');
-  const isBusy = isAnalyzing || isSubmitting;
+  // Count files ready to analyze
+  const uploadedCount = files.filter((f) => f.status === 'uploaded').length;
 
   return (
-    <div className="app" role="application" aria-label="Coldbones AI Vision Analysis">
-      <a className="skip-link" href="#main-content">Skip to main content</a>
-
-      <header className="app-header" role="banner">
+    <div className="app">
+      {/* Header */}
+      <header className="app-header">
         <div className="header-left">
-          <h1 className="app-title">coldbones</h1>
-          <span className="app-subtitle" aria-label={t.appSubtitle}>{t.appSubtitle}</span>
-        </div>
-        <div className="header-center">
-          <ModeToggle disabled={isBusy} />
+          <h1 className="app-title">ColdBones</h1>
+          <span className="app-subtitle">{t.appSubtitle}</span>
         </div>
         <div className="header-right">
           <LanguagePicker />
-          <StatusIndicator health={health} />
+          <ModeToggle disabled={isBusy} />
+          <div className="health-indicator">
+            {health?.model_loaded ? (
+              <span
+                className="health-ok"
+                title={`${health.provider} · ${health.model}`}
+              >
+                ● {health.provider}
+              </span>
+            ) : health ? (
+              <span
+                className="health-err"
+                title={`LM Studio unreachable at ${health.lm_studio_url ?? '—'}`}
+              >
+                ● LM Studio offline
+              </span>
+            ) : (
+              <span
+                className="health-err"
+                title={healthError ?? 'Checking…'}
+              >
+                ● {healthError ? 'Offline' : 'Connecting…'}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="app-main" id="main-content" role="main">
-        <div className="left-panel">
-          <UploadZone onFilesAdded={handleFilesAdded} disabled={isBusy} />
+      {/* Main layout */}
+      <main className="app-main">
+        {/* Left: upload + file list */}
+        <section className="sidebar">
+          <UploadZone onFilesAdded={addFiles} disabled={!isReady || isBusy} />
 
           {files.length > 0 && (
-            <div className="action-bar" role="toolbar" aria-label="File actions">
-              <button
-                className="btn btn-primary"
-                onClick={handleAnalyze}
-                disabled={isBusy || hasUploadsInProgress || analyzableFileCount === 0 || health.status !== 'online'}
-                aria-busy={isBusy}
-              >
-                {isBusy
-                  ? (mode === 'slow' ? t.submittingBtn : t.analyzingBtn)
-                  : t.analyzeBtn(analyzableFileCount)}
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={handleClear}
-                disabled={isBusy}
-              >
-                {t.clearAll}
-              </button>
-            </div>
+            <>
+              <FilePreview
+                file={selectedFile}
+                files={files}
+                onSelect={setSelectedFileId}
+                onRemove={removeFile}
+              />
+              <div className="action-row">
+                <button
+                  className="btn-analyze"
+                  disabled={!canAnalyze}
+                  onClick={handleAnalyze}
+                >
+                  {isAnalyzing
+                    ? t.analyzing()
+                    : t.analyzeBtn(uploadedCount > 0 ? uploadedCount : 1)}
+                </button>
+                <button
+                  className="btn-clear"
+                  onClick={clearAll}
+                  disabled={isBusy}
+                >
+                  {t.clearAll}
+                </button>
+              </div>
+            </>
           )}
+        </section>
 
-          {submissionError && (
-            <div className="analysis-error" role="alert" aria-live="polite">
-              <h3>{t.analysisError}</h3>
-              <p>{submissionError}</p>
-            </div>
-          )}
-
-          <FilePreview
-            file={selectedFile}
-            files={files}
-            onSelect={setSelectedFileId}
-            onRemove={handleRemove}
+        {/* Right: analysis result */}
+        <section className="result-panel">
+          <AnalysisPanel
+            result={selectedFile?.result ?? null}
+            isAnalyzing={isAnalyzing}
+            currentFileName={selectedFile?.file.name}
+            error={selectedFile?.error ?? null}
+            elapsedMs={elapsedMs}
           />
-        </div>
-
-        <div className="right-panel">
-          {mode === 'slow' ? (
-            <JobTracker jobs={jobs} />
-          ) : (
-            <AnalysisPanel
-              result={selectedResult}
-              isAnalyzing={isAnalyzing && currentFileId === selectedFileId}
-              currentFileName={currentFile?.name}
-              error={error}
-              elapsedMs={elapsedMs}
-            />
-          )}
-        </div>
+        </section>
       </main>
+
+      {/* Slow-mode job tracker */}
+      {slowJobs.length > 0 && (
+        <aside className="job-sidebar">
+          <JobTracker jobs={slowJobs} />
+        </aside>
+      )}
     </div>
-  );
-}
-
-function StatusIndicator({ health }: { health: HealthState }) {
-  const { t } = useLanguage();
-
-  const config: Record<HealthStatus, { label: string; detail?: string }> = {
-    checking: { label: t.statusConnecting },
-    online: {
-      label: t.statusReady,
-      detail: health.latencyMs !== null ? `${health.latencyMs}ms` : undefined,
-    },
-    'model-missing': {
-      label: t.statusNoModel,
-      detail: t.statusLoadModel,
-    },
-    offline: {
-      label: t.statusOffline,
-      detail: health.consecutiveFailures > 1
-        ? t.failedChecks(health.consecutiveFailures)
-        : undefined,
-    },
-  };
-
-  const { label, detail } = config[health.status];
-
-  return (
-    <div
-      className={`status-indicator status-${health.status}`}
-      role="status"
-      aria-live="polite"
-      aria-label={`${label}${detail ? ` — ${detail}` : ''}`}
-    >
-      <span className="status-dot" aria-hidden="true" />
-      <span className="status-text">{label}</span>
-      {detail && <span className="status-detail">{detail}</span>}
-    </div>
-  );
-}
-
-export default function App() {
-  return (
-    <LanguageProvider>
-      <ModeProvider>
-        <AppContent />
-      </ModeProvider>
-    </LanguageProvider>
   );
 }

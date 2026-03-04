@@ -1,114 +1,98 @@
 """
 Lambda: get-presigned-url
 
-Generates an S3 pre-signed PUT URL so the browser can upload directly to S3
-without going through the backend. Also writes an initial job record to DynamoDB.
+Generates an S3 pre-signed PUT URL so the browser can upload directly
+to S3 without routing through API Gateway.
 
-Event (API Gateway REST):
-  POST /upload
-  Body: { "filename": "photo.jpg", "contentType": "image/jpeg", "mode": "fast" }
+Event (API Gateway proxy):
+  POST /api/presign
+  Body: { "filename": "photo.jpg", "contentType": "image/jpeg" }
 
-Response:
-  { "uploadUrl": "https://...", "s3Key": "uploads/<jobId>/original.<ext>", "jobId": "<uuid>" }
+Returns:
+  { "uploadUrl": "https://…", "s3Key": "uploads/<uuid>/photo.jpg",
+    "expiresIn": 300 }
 """
 
 import json
 import os
+import re
 import uuid
-from datetime import datetime, timezone
+from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
 
-s3 = boto3.client("s3")
-dynamodb = boto3.resource("dynamodb")
+s3_client = boto3.client("s3")
 
 UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
-JOBS_TABLE = os.environ["JOBS_TABLE"]
-URL_EXPIRES_IN = int(os.environ.get("URL_EXPIRES_IN", 300))  # 5 minutes
+PRESIGN_EXPIRY = int(os.environ.get("PRESIGN_EXPIRY_SECONDS", 300))
+
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp",
+    "image/gif", "image/bmp", "image/tiff", "application/pdf",
+}
 
 
-def handler(event, context):
+def handler(event: dict, _context: Any) -> dict:
+    raw_body = event.get("body") or "{}"
     try:
-        body = json.loads(event.get("body") or "{}")
-    except Exception:
+        body = json.loads(raw_body)
+    except json.JSONDecodeError:
         return _error(400, "Invalid JSON body")
 
-    filename = body.get("filename", "upload")
-    content_type = body.get("contentType", "application/octet-stream")
-    mode = body.get("mode", "fast")
+    filename = body.get("filename", "").strip()
+    content_type = body.get("contentType", "").strip().lower()
 
-    # Sanitise filename and derive extension
-    safe_name = "".join(c for c in filename if c.isalnum() or c in (".", "-", "_"))
-    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else "bin"
+    if not filename:
+        return _error(400, "Missing filename")
+    if not content_type:
+        return _error(400, "Missing contentType")
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        return _error(400, f"Unsupported content type: {content_type}")
 
-    job_id = str(uuid.uuid4())
-    s3_key = f"uploads/{job_id}/original.{ext}"
+    safe_name = _safe_filename(filename)
+    file_uuid = str(uuid.uuid4())
+    s3_key = f"uploads/{file_uuid}/{safe_name}"
 
-    # Generate pre-signed PUT URL
     try:
-        presigned_url = s3.generate_presigned_url(
+        upload_url = s3_client.generate_presigned_url(
             "put_object",
             Params={
                 "Bucket": UPLOAD_BUCKET,
                 "Key": s3_key,
                 "ContentType": content_type,
             },
-            ExpiresIn=URL_EXPIRES_IN,
+            ExpiresIn=PRESIGN_EXPIRY,
         )
     except ClientError as e:
-        return _error(500, f"Failed to generate pre-signed URL: {e}")
+        return _error(502, f"Could not generate presigned URL: {e}")
 
-    # Write initial job record to DynamoDB
-    table = dynamodb.Table(JOBS_TABLE)
-    ttl = int((datetime.now(timezone.utc).timestamp()) + 86400)  # 24h TTL
-    try:
-        table.put_item(
-            Item={
-                "jobId": job_id,
-                "status": "pending",
-                "mode": mode,
-                "s3Key": s3_key,
-                "filename": filename,
-                "contentType": content_type,
-                "createdAt": datetime.now(timezone.utc).isoformat(),
-                "updatedAt": datetime.now(timezone.utc).isoformat(),
-                "expiresAt": ttl,
-            }
-        )
-    except ClientError as e:
-        # Non-fatal — still return the URL
-        print(f"WARNING: Failed to write job to DynamoDB: {e}")
-
-    return _ok(
-        {
-            "uploadUrl": presigned_url,
-            "s3Key": s3_key,
-            "jobId": job_id,
-        }
-    )
-
-
-def _ok(body: dict) -> dict:
     return {
         "statusCode": 200,
-        "headers": _cors_headers(),
-        "body": json.dumps(body),
+        "body": json.dumps({
+            "uploadUrl": upload_url,
+            "s3Key": s3_key,
+            "expiresIn": PRESIGN_EXPIRY,
+        }),
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+        },
     }
 
 
-def _error(status: int, message: str) -> dict:
+def _safe_filename(filename: str) -> str:
+    name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    name = re.sub(r"[^\w.\-]", "_", name)
+    return name or "upload"
+
+
+def _error(status: int, msg: str) -> dict:
     return {
         "statusCode": status,
-        "headers": _cors_headers(),
-        "body": json.dumps({"error": message}),
-    }
-
-
-def _cors_headers() -> dict:
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization",
-        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+        "body": json.dumps({"detail": msg}),
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+        },
     }

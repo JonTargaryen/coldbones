@@ -63,7 +63,7 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
             <h3>
               <span aria-hidden="true">🧠</span> {t.reasoning}
               <span className="reasoning-meta">
-                {result.reasoningTokenCount.toLocaleString()} {t.tokens}
+                {(result.reasoningTokenCount ?? 0).toLocaleString()} {t.tokens}
               </span>
             </h3>
           </button>
@@ -103,7 +103,7 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
 
       <div className="result-meta">
         <span>{t.mode}: {result.mode === 'fast' ? `⚡ ${t.fast}` : `🐢 ${t.slow}`}</span>
-        <span>{t.processedIn((result.processingTimeMs / 1000).toFixed(1))}</span>
+        <span>{t.processedIn(((result.processingTimeMs ?? 0) / 1000).toFixed(1))}</span>
         {result.finishReason === 'length' && (
           <span className="finish-warning" title={t.truncatedTooltip} role="alert">
             ⚠️ {t.truncated}
