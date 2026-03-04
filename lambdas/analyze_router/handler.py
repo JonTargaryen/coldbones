@@ -1,12 +1,35 @@
 """
 Lambda: analyze-router
 
-Routes POST /api/analyze:
-  fast    → checks desktop health; if alive, synchronously invokes
-             analyze-orchestrator (which calls desktop LM Studio directly).
-             Falls back to offline queue if desktop is down.
-  offline → writes QUEUED to DynamoDB + enqueues to SQS.
-             Desktop worker processes the job when it comes back online.
+This is the single entry-point for all analysis requests.  It decides HOW the
+job will be processed and returns a 202 immediately so the browser isn't
+blocked waiting for a long inference run.
+
+Routing logic:
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ POST /api/analyze { mode: "fast" }                                   │
+  │   is_desktop_alive() ──yes──→ _invoke_async()  → 202 + jobId        │
+  │                    ──no───→ _enqueue(fallback=True) → 202 + jobId   │
+  │                                                                       │
+  │ POST /api/analyze { mode: "offline" }                                │
+  │   always → _enqueue() → 202 + jobId                                  │
+  └─────────────────────────────────────────────────────────────────────┘
+
+Why always 202 (not 200)?
+  API Gateway has a hard 29 s timeout.  LM Studio inference on a single GPU
+  for a multi-page PDF can take 30–90 s, so a synchronous response would always
+  time out.  Instead:
+    1. This router writes PROCESSING to DynamoDB and fires the orchestrator
+       Lambda asynchronously (InvocationType='Event' = fire-and-forget).
+    2. It returns 202 + jobId to the browser immediately.
+    3. The browser polls GET /api/status/{jobId} every few seconds.
+  This pattern is sometimes called the "async polling" or "job ticket" pattern.
+
+Offline / fallback queue path:
+  If the desktop is unreachable (LM Studio not running, power off, network
+  issue), jobs are written to SQS instead.  The desktop worker (worker/worker.py)
+  long-polls SQS and processes the queue whenever it's online.  This means the
+  system degrades gracefully rather than failing hard.
 
 Event (API Gateway proxy):
   POST /api/analyze
@@ -79,12 +102,22 @@ def handler(event: dict, _context: Any) -> dict:
 
 
 def _invoke_async(payload: dict, job_id: str) -> dict:
-    """Fire the orchestrator asynchronously and return 202 immediately.
-    API Gateway has a 29-second hard limit — synchronous invocation always
-    times out for LM Studio inference (30-90 s).  Instead:
-      1. Write PROCESSING to DynamoDB so /api/status returns immediately.
-      2. Invoke orchestrator with InvocationType='Event' (fire-and-forget).
-      3. Return 202 + jobId — frontend polls GET /api/status/{jobId}.
+    """Fire the orchestrator Lambda asynchronously (fire-and-forget) and
+    return HTTP 202 + jobId so the browser can start polling.
+
+    Sequence:
+      1. Pre-write PROCESSING to DynamoDB.  This ensures that if the browser
+         polls before the orchestrator has had time to write its own status
+         update, it still gets a sensible response instead of 404.
+      2. Call Lambda:Invoke with InvocationType='Event'.  This returns
+         immediately (HTTP 202 from the Lambda control plane) without waiting
+         for the function to finish.  The orchestrator runs in the background.
+      3. Return our own 202 to the browser with the jobId it should poll.
+
+    Why InvocationType='Event' and not 'RequestResponse'?
+      'RequestResponse' would block this Lambda until the orchestrator finishes
+      (up to 10 min), which would exceed API Gateway's 29 s limit on *this*
+      function.  'Event' decouples the two Lambdas entirely.
     """
     if not ORCHESTRATOR_FUNCTION_ARN:
         return _error(500, 'ORCHESTRATOR_FUNCTION_ARN not configured')

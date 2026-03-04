@@ -113,12 +113,6 @@ cd /path/to/coldbones/worker
 python3 -m venv /opt/coldbones/venv
 /opt/coldbones/venv/bin/pip install -r requirements.txt
 
-# Install poppler (needed by pdf2image)
-# Ubuntu/Debian:
-sudo apt install -y poppler-utils
-# Windows:
-#   choco install poppler
-
 # Copy and fill in the env file
 cp .env.example .env
 nano .env   # fill in AWS creds, queue URL, bucket, table

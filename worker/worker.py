@@ -336,12 +336,15 @@ def _image_to_data_url(raw_bytes: bytes) -> str | None:
 
 def _pdf_to_data_urls(pdf_bytes: bytes) -> list[str]:
     try:
-        from pdf2image import convert_from_bytes
-        images = convert_from_bytes(pdf_bytes, dpi=150, fmt='png')
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(pdf_bytes)
         result = []
-        for img in images[:MAX_PDF_PAGES]:
+        for i in range(min(len(pdf), MAX_PDF_PAGES)):
+            page = pdf[i]
+            bitmap = page.render(scale=150 / 72)
+            pil_image = bitmap.to_pil()
             buf = io.BytesIO()
-            img.save(buf, format='PNG')
+            pil_image.save(buf, format='PNG')
             result.append('data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode())
         return result
     except Exception as e:

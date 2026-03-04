@@ -10,13 +10,17 @@ import type {
 
 // Re-export SlowJob so components that do:
 //   import type { SlowJob } from '../hooks/useSlowAnalysis'
-// continue to work.
+// continue to work without needing to know its canonical location (types/index.ts).
 export type { SlowJob } from '../types';
 
+// Same-origin in prod (empty string), localhost:8000 in local dev.
 const API = import.meta.env.VITE_API_BASE_URL ?? '';
 
+// Slow mode polls less frequently than fast mode because offline/queued jobs
+// can sit in SQS for minutes or hours waiting for the desktop to come online.
 const POLL_INTERVAL_MS = 4000;
-const POLL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+// 15 minutes — generous ceiling for the desktop worker to start and finish.
+const POLL_TIMEOUT_MS = 15 * 60 * 1000;
 
 const NO_TEXT_SENTINEL = 'No text detected.';
 

@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
-# Build and deploy the React frontend to S3 + CloudFront
-# Must be run after `./deploy.sh` (needs CDK outputs)
+# =============================================================================
+# ColdBones Frontend Deploy
+# =============================================================================
+#
+# Builds the React/Vite app and syncs it to the S3 site bucket, then
+# invalidates the CloudFront cache so users immediately see the new version.
+#
+# Prerequisites:
+#   - ./scripts/deploy.sh has been run (writes scripts/cdk-outputs.json)
+#   - AWS CLI authenticated for the same account/region as the CDK stacks
 #
 # Usage:
 #   ./scripts/deploy-frontend.sh
 #   SITE_BUCKET=my-bucket ./scripts/deploy-frontend.sh  (override bucket)
+#
+# VITE_API_BASE_URL is intentionally left EMPTY for production.
+# Reason: the frontend is served from CloudFront.  All /api/* requests should
+# use the same origin (the CloudFront domain) so CloudFront can route them to
+# API Gateway via the dedicated /api/* behavior added in StorageStack.
+# Setting VITE_API_BASE_URL to the direct API Gateway URL would bypass
+# CloudFront for API calls, causing CORS issues and breaking the routing setup.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,25 +59,27 @@ if [ ! -d "node_modules" ]; then
   npm ci
 fi
 
-# Resolve API URL from CDK outputs or fall back to the known deployed URL
-API_URL=$(jq -r '.ColdbonesApi.ApiUrl // empty' "$CDK_OUTPUTS" 2>/dev/null | sed 's:/$::' || true)
-if [ -z "$API_URL" ]; then
-  API_URL="https://la0cszeq83.execute-api.us-east-1.amazonaws.com/v1"
-fi
-echo "→ API URL: $API_URL"
+# For production, VITE_API_BASE_URL must be empty so the browser uses same-origin
+# CloudFront routing (/api/* → API Gateway). Setting it to the direct APIGW URL
+# causes subtle errors when CloudFront is the actual entry point.
+echo "→ Building production bundle (same-origin API routing via CloudFront)…"
+VITE_API_BASE_URL="" npm run build
 
-echo "→ Building production bundle…"
-VITE_API_BASE_URL="$API_URL" npm run build
-
-# Sync to S3
-echo "→ Uploading to s3://$BUCKET …"
+# Sync assets (JS, CSS, fonts) with long-lived immutable cache headers.
+# The Vite build content-hashes all asset filenames (index-BsK3MpRv.js etc.),
+# so serving stale bytes from a cached filename is impossible — a new deploy
+# generates new filenames.  max-age=31536000 (1 year) tells CDN edges to
+# never revalidate these files, giving maximum cache hit rates.
 aws s3 sync dist/ "s3://$BUCKET" \
   --delete \
   --cache-control "public,max-age=31536000,immutable" \
   --exclude "index.html" \
   --region "$REGION"
 
-# Upload index.html with no-cache
+# Upload index.html with strict no-cache.
+# index.html is the SPA entry point; it must never be cached so that:
+#   - New deployments are picked up by returning users immediately.
+#   - The hashed asset filenames referenced in the HTML always match what's in S3.
 aws s3 cp dist/index.html "s3://$BUCKET/index.html" \
   --cache-control "no-cache,no-store,must-revalidate" \
   --region "$REGION"

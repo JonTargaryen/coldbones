@@ -168,7 +168,18 @@ export class ApiStack extends cdk.Stack {
       memorySize: 128,
     });
 
-    // ─── REST API ──────────────────────────────────────────────────────────
+    // ─── REST API ──────────────────────────────────────────────────────────────
+    // Throttle: 20 req/s sustained, 50 burst.  The desktop can only process
+    // one inference at a time, so there's no point accepting more requests
+    // than that.  The limits protect both the Lambda concurrency quota and the
+    // desktop GPU from being overwhelmed by runaway clients.
+    //
+    // CORS defaultCorsPreflightOptions:
+    //   API Gateway handles OPTIONS preflight automatically when this is set.
+    //   Without it, browsers would block all cross-origin requests even though
+    //   our Lambda responses include Access-Control-Allow-Origin: *.
+    //   (CloudFront forwards CORS headers from the origin, so both the
+    //   Lambda and APIGW need to agree on the allowed origins.)
     const accessLog = new logs.LogGroup(this, 'ApiAccessLog', {
       retention:     logs.RetentionDays.ONE_WEEK,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -197,6 +208,20 @@ export class ApiStack extends cdk.Stack {
     const api = this.restApi.root.addResource('api');
 
     // GET /api/health
+    // GET /api/health  ── Mock integration (no Lambda)
+    // A mock integration returns a static response directly from API Gateway
+    // without invoking any Lambda.  It costs $0 (no Lambda invocations) and
+    // has zero cold-start latency.
+    //
+    // model_loaded: true tells the frontend's health-check gate that the
+    // backend is ready to accept work.  The frontend disables the upload zone
+    // when this is false or missing (health === null).
+    //
+    // Note: The actual LM Studio liveness is checked only when a file is
+    // submitted (analyze_router calls is_desktop_alive()).  This health
+    // endpoint is intentionally a lightweight "API is deployed" check, not a
+    // "GPU is running" check, to avoid adding 4 s of Tailscale latency to
+    // every page load.
     const health = api.addResource('health');
     health.addMethod('GET', new apigw.MockIntegration({
       integrationResponses: [{
@@ -204,6 +229,7 @@ export class ApiStack extends cdk.Stack {
         responseTemplates: {
           'application/json': JSON.stringify({
             status:       'ok',
+            model_loaded: true,
             model:        modelName,
             provider:     'LM Studio (desktop RTX 5090 via Tailscale)',
           }),

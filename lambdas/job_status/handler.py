@@ -1,21 +1,33 @@
 """
 Lambda: job-status
 
-Returns the current status and result of a slow-mode analysis job.
+Serves GET /api/status/{jobId} — the polling endpoint the browser calls after
+submitting an analysis job and receiving a 202 response.
+
+Why poll instead of WebSockets or SSE?
+  - Simple to implement and debug.
+  - Lambda + API Gateway REST support WebSockets only via a separate API type
+    (API Gateway WebSocket API).  Adding that doubles the infrastructure surface.
+  - Poll interval is 4 s (fast mode) / 4 s (slow mode).  For typical inference
+    times of 15–90 s this means 4–23 extra round trips — negligible cost and
+    latency overhead.
+  - If we ever want push notifications we can add SNS → browser without changing
+    this Lambda at all.
+
+DynamoDB item schema (relevant fields):
+  {
+    "jobId":       string (PK)  — UUID set by analyze_router
+    "status":      "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED"
+    "createdAt":   ISO-8601 UTC — when the job was accepted
+    "startedAt":   ISO-8601 UTC — when the orchestrator picked it up
+    "completedAt": ISO-8601 UTC — when inference finished
+    "result":      map          — full analysis payload (status=COMPLETED only)
+    "error":       string       — error message (status=FAILED only)
+    "ttl":         epoch secs   — DynamoDB TTL; items auto-delete after 24 h
+  }
 
 Event (API Gateway proxy):
   GET /api/status/{jobId}
-
-DynamoDB item schema:
-  {
-    "jobId":       string (PK)
-    "status":      "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED"
-    "createdAt":   ISO timestamp
-    "startedAt":   ISO timestamp (optional)
-    "completedAt": ISO timestamp (optional)
-    "result":      map (present when status=COMPLETED)
-    "error":       string (present when status=FAILED)
-  }
 """
 
 import json
@@ -72,8 +84,15 @@ def handler(event: dict, _context: Any) -> dict:
 
 
 def _json_default(obj: Any) -> Any:
-    """Handle types not natively serializable by json.dumps.
-    DynamoDB boto3 resource returns Decimal for Number attributes."""
+    """Custom json.dumps serialiser for types DynamoDB boto3 returns.
+
+    The boto3 DynamoDB resource deserialises Number attributes as Python
+    Decimal, not int/float, to avoid floating-point precision loss.  json.dumps
+    cannot serialize Decimal by default, so we convert it here:
+      - Whole numbers (e.g. Decimal('42')) → int (preserves JSON integer type)
+      - Fractional numbers (e.g. Decimal('3.14')) → float
+      - Anything else → str (fallback so serialisation never crashes)
+    """
     if isinstance(obj, Decimal):
         return int(obj) if obj % 1 == 0 else float(obj)
     return str(obj)

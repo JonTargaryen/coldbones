@@ -29,7 +29,19 @@ export default function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Health check on mount and every 30s
+  // ── Health check ─────────────────────────────────────────────────────────────────
+  // The upload zone is disabled (grayed out) until health.status === 'ok' &&
+  // health.model_loaded === true.  This prevents the user from uploading a file
+  // when the backend isn't ready, which would result in a confusing 'Analysis
+  // failed' error after a successful S3 upload.
+  //
+  // Why not rely on the analyze request failing instead?
+  //   The presign/upload cycle succeeds regardless of backend state (it's
+  //   just S3).  Gating on health means the user gets immediate feedback
+  //   ("Server offline") instead of a 30 s wait followed by an error.
+  //
+  // 30 s poll: keeps the indicator fresh if the desktop goes offline mid-
+  // session, but doesn't burn unnecessary API Gateway requests.
   useEffect(() => {
     const check = async () => {
       try {
@@ -80,11 +92,23 @@ export default function App() {
   }, [files, selectedFileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
+  // isReady gates the upload zone AND the analyse button.
+  // Both conditions must be true:
+  //   1. health !== null  — health check resolved (API is reachable)
+  //   2. health.status === 'ok'  — the mock endpoint returned its sentinel value
+  // model_loaded is checked in the header indicator but not here; the /api/health
+  // mock always returns model_loaded:true because the actual LM Studio check
+  // is deferred to the analyze_router Lambda at submission time.
   const isReady = health?.status === 'ok';
   const isUploading = selectedFile?.status === 'uploading';
   const isAnalyzing = selectedFile?.status === 'analyzing';
+  // isBusy prevents concurrent operations on the same file.
   const isBusy = isUploading || isAnalyzing;
 
+  // canAnalyze: all three gates must pass before the Analyse button is active.
+  //   'uploaded'  — the file has been PUT to S3 and we have an s3Key
+  //   isReady     — the backend health check passed
+  //   !isBusy     — no other operation is in flight for this file
   const canAnalyze = selectedFile?.status === 'uploaded' && isReady && !isBusy;
 
   const handleAnalyze = async () => {

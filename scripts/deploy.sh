@@ -1,10 +1,35 @@
 #!/usr/bin/env bash
+# =============================================================================
 # ColdBones CDK deployment script
+# =============================================================================
 #
-# Usage: ./scripts/deploy.sh [stack]
+# Usage:
+#   ./scripts/deploy.sh [stack]
 #   stack: all | storage | queue | network | gpu | api  (default: all)
 #
-# Stack deploy order: Storage → Queue → Network → Gpu → Api
+# Stack deploy order and dependencies:
+#
+#   Storage ──┬─> API
+#   Queue ───┘
+#
+#   Storage owns: S3 (upload + site), CloudFront, DynamoDB, Route53, ACM
+#   Queue owns:   SQS analysis queue + DLQ, SNS notification topic
+#   Api owns:     5 Lambda functions + API Gateway REST API
+#
+# First-time deploy order:
+#   1. deploy.sh storage   → creates S3, CloudFront, DynamoDB
+#   2. deploy.sh queue     → creates SQS (needed by Api Lambdas)
+#   3. deploy.sh api       → creates Lambdas + API Gateway
+#   4. Update cdk.json:    set coldbones.apiGatewayDomain = <the APIGW hostname>
+#                         from scripts/cdk-outputs.json → ColdbonesApi.ApiUrl
+#   5. deploy.sh storage   → adds the CloudFront /api/* behavior
+#   6. deploy-frontend.sh  → builds React app and uploads to S3
+#
+# The separation between Storage and Api exists because of a circular CDK
+# dependency if we tried to reference the API Gateway URL *as a CDK token*
+# from inside StorageStack — Storage needs Api's domain for the CloudFront
+# behavior, but Api needs Storage's bucket and table.  The workaround is to
+# deploy Api first, hardcode the domain in cdk.json, then redeploy Storage.
 #
 # NOTE: The 250 GB EBS volume created by ColdbonesGpu has RemovalPolicy=RETAIN.
 #       Destroying the stack will NOT delete the volume. This is intentional —
@@ -22,13 +47,14 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 cd "$INFRA_DIR"
 
-# Install CDK dependencies if needed
+# Install CDK dependencies if needed (node_modules may not be committed).
 if [ ! -d "node_modules" ]; then
   echo "→ Installing infrastructure dependencies…"
   npm ci
 fi
 
-# Bootstrap CDK (safe to re-run)
+# Bootstrap CDK: creates the CDK staging bucket and IAM roles in the account.
+# Safe to re-run — it only creates resources that don't already exist.
 echo "→ Bootstrapping CDK (safe to re-run)…"
 npx cdk bootstrap "aws://$(aws sts get-caller-identity --query Account --output text)/$REGION" \
   --region "$REGION" 2>&1 | tail -5
