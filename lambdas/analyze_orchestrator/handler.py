@@ -175,7 +175,7 @@ def handler(event: dict, _context: Any) -> dict:
         'finish_reason':           finish_reason,
         'mode':                    'fast',
         'model':                   model_name,
-        'provider':                'LM Studio (desktop RTX 5090)',
+        'provider':                'RTX 5090',
         'filename':                filename,
     }
 

@@ -160,7 +160,7 @@ async def health():
     return {
         "status": "ok" if model_loaded else "degraded",
         "model": current_model,
-        "provider": "vLLM (Cloud GPU)",
+        "provider": "RTX 5090",
         "vllm_url": VLLM_URL,
         "model_loaded": model_loaded,
     }
@@ -277,7 +277,7 @@ async def analyze(request: Request):
         "processing_time_ms": elapsed_ms,
         "mode": mode,
         "model": active_model,
-        "provider": "vLLM (Cloud GPU)",
+        "provider": "RTX 5090",
     }
 
 

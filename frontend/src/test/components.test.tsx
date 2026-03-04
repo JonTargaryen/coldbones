@@ -304,7 +304,7 @@ describe('AnalysisPanel', () => {
     expect(screen.queryByText('No text detected.')).not.toBeInTheDocument()
   })
 
-  it('shows ⚡ Fast mode in result meta', () => {
+  it('shows Fast mode in result meta', () => {
     const result: AnalysisResult = {
       fileId: 'f1', summary: 's', keyObservations: [],
       contentClassification: 'Doc', extractedText: '',
@@ -315,7 +315,7 @@ describe('AnalysisPanel', () => {
     expect(screen.getByText(/fast/i)).toBeInTheDocument()
   })
 
-  it('shows 🐢 Slow mode in result meta', () => {
+  it('shows Slow mode in result meta', () => {
     const result: AnalysisResult = {
       fileId: 'f1', summary: 's', keyObservations: [],
       contentClassification: 'Doc', extractedText: '',
@@ -472,9 +472,10 @@ describe('UploadZone', () => {
     expect(container.querySelector('input[type="file"]')).toBeInTheDocument()
   })
 
-  it('shows upload icon', () => {
+  it('shows upload title text', () => {
     r(<UploadZone onFilesAdded={vi.fn()} />)
-    expect(screen.getByText('📁')).toBeInTheDocument()
+    const btn = screen.getByRole('button')
+    expect(btn.textContent).toMatch(/drag|drop|upload/i)
   })
 
   it('shows upload title text', () => {

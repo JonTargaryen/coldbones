@@ -241,9 +241,9 @@ function StatusBadge({ status, progress }: { status: UploadedFile['status']; pro
     pending: '',
     uploading: `${Math.max(0, Math.min(100, Math.round(progress)))}%`,
     uploaded: '✓',
-    analyzing: '🔄',
-    complete: '✅',
-    error: '❌',
+    analyzing: '…',
+    complete: '✓',
+    error: '×',
   };
   if (!labels[status]) return null;
   return <span className={`status-badge status-${status}`} aria-label={`Status: ${status}`}>{labels[status]}</span>;

@@ -55,7 +55,7 @@ export interface Translations {
 }
 
 const en: Translations = {
-  appSubtitle: 'AI Vision Analysis',
+  appSubtitle: 'Powered by Nvidia RTX 5090 · Blackwell Architecture',
   uploadTitle: 'Drag & drop files here',
   uploadTitleDrag: 'Drop files here',
   uploadSubtitle: 'or click to browse',
@@ -94,7 +94,7 @@ const en: Translations = {
 };
 
 const hi: Translations = {
-  appSubtitle: 'AI दृश्य विश्लेषण',
+  appSubtitle: 'Powered by Nvidia RTX 5090 · Blackwell Architecture',
   uploadTitle: 'फ़ाइलें यहाँ खींचें और छोड़ें',
   uploadTitleDrag: 'फ़ाइलें यहाँ छोड़ें',
   uploadSubtitle: 'या ब्राउज़ करने के लिए क्लिक करें',
@@ -133,7 +133,7 @@ const hi: Translations = {
 };
 
 const es: Translations = {
-  appSubtitle: 'Análisis Visual con IA',
+  appSubtitle: 'Powered by Nvidia RTX 5090 · Blackwell Architecture',
   uploadTitle: 'Arrastra y suelta archivos aquí',
   uploadTitleDrag: 'Suelta los archivos aquí',
   uploadSubtitle: 'o haz clic para buscar',
@@ -172,7 +172,7 @@ const es: Translations = {
 };
 
 const bn: Translations = {
-  appSubtitle: 'AI দৃশ্য বিশ্লেষণ',
+  appSubtitle: 'Powered by Nvidia RTX 5090 · Blackwell Architecture',
   uploadTitle: 'এখানে ফাইল টেনে আনুন',
   uploadTitleDrag: 'এখানে ফাইল ছেড়ে দিন',
   uploadSubtitle: 'অথবা ব্রাউজ করতে ক্লিক করুন',

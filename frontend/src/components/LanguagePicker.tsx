@@ -1,11 +1,11 @@
 import { useLanguage } from '../contexts/LanguageContext';
 import type { Language } from '../i18n/translations';
 
-const OPTIONS: { code: Language; label: string; flag: string }[] = [
-  { code: 'en', label: 'English', flag: '🇬🇧' },
-  { code: 'es', label: 'Spanish', flag: '🇪🇸' },
-  { code: 'hi', label: 'Hindi',   flag: '🇮🇳' },
-  { code: 'bn', label: 'Bengali', flag: '🇧🇩' },
+const OPTIONS: { code: Language; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'bn', label: 'Bengali' },
 ];
 
 export function LanguagePicker() {
@@ -21,7 +21,7 @@ export function LanguagePicker() {
       >
         {OPTIONS.map(o => (
           <option key={o.code} value={o.code}>
-            {o.flag} {o.label}
+            {o.label}
           </option>
         ))}
       </select>

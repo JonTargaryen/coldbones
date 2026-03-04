@@ -21,7 +21,6 @@ export function ModeToggle({ disabled = false }: ModeToggleProps) {
         title="Fast mode: instant results — always-warm GPU, synchronous response"
         aria-pressed={mode === 'fast'}
       >
-        <span className="mode-icon" aria-hidden="true">⚡</span>
         <span className="mode-label">Fast</span>
       </button>
       <button
@@ -31,7 +30,6 @@ export function ModeToggle({ disabled = false }: ModeToggleProps) {
         title="Slow mode: queued processing — Spot GPU, up to 90% cheaper, batch support"
         aria-pressed={mode === 'slow'}
       >
-        <span className="mode-icon" aria-hidden="true">🐢</span>
         <span className="mode-label">Slow</span>
       </button>
     </div>

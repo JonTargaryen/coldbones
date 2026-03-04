@@ -13,11 +13,11 @@ export function JobTracker({ jobs }: JobTrackerProps) {
     return (
       <div className="job-tracker empty-state">
         <p className="job-tracker-empty">
-          Submit files in 🐢 Slow mode to queue them for processing.
+          Submit files in Slow mode to queue them for processing.
           Results will appear here when complete.
         </p>
         <div className="job-tracker-info">
-          <p>🐢 <strong>Slow mode</strong> uses Spot GPU instances — up to 90% cheaper than Fast mode.</p>
+          <p><strong>Slow mode</strong> uses Spot GPU instances — up to 90% cheaper than Fast mode.</p>
           <p>Typical wait: 2–10 minutes (includes GPU spin-up if needed).</p>
         </div>
       </div>
@@ -97,7 +97,7 @@ export function JobTracker({ jobs }: JobTrackerProps) {
                 title="Copy job ID"
                 aria-label="Copy job ID"
               >
-                📋
+                Copy
               </button>
             </div>
           </div>
@@ -109,10 +109,10 @@ export function JobTracker({ jobs }: JobTrackerProps) {
 
 function statusIcon(status: SlowJob['status']): string {
   switch (status) {
-    case 'queued': return '⏳';
-    case 'processing': return '🔄';
-    case 'complete': return '✅';
-    case 'failed': return '❌';
+    case 'queued': return '○';
+    case 'processing': return '◎';
+    case 'complete': return '✓';
+    case 'failed': return '×';
     default: return '•';
   }
 }

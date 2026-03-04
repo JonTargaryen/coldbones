@@ -61,7 +61,7 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
           >
             <span className="reasoning-toggle-icon" aria-hidden="true">{reasoningOpen ? '▼' : '▶'}</span>
             <h3>
-              <span aria-hidden="true">🧠</span> {t.reasoning}
+              {t.reasoning}
               <span className="reasoning-meta">
                 {(result.reasoningTokenCount ?? 0).toLocaleString()} {t.tokens}
               </span>
@@ -102,11 +102,11 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
       )}
 
       <div className="result-meta">
-        <span>{t.mode}: {result.mode === 'fast' ? `⚡ ${t.fast}` : `🐢 ${t.slow}`}</span>
+        <span>{t.mode}: {result.mode === 'fast' ? t.fast : t.slow}</span>
         <span>{t.processedIn(((result.processingTimeMs ?? 0) / 1000).toFixed(1))}</span>
         {result.finishReason === 'length' && (
           <span className="finish-warning" title={t.truncatedTooltip} role="alert">
-            ⚠️ {t.truncated}
+            {t.truncated}
           </span>
         )}
       </div>
