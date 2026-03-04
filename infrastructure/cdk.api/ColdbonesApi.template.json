@@ -1,0 +1,1465 @@
+{
+ "Resources": {
+  "LambdaRole3A44B857": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/AWSXRayDaemonWriteAccess"
+       ]
+      ]
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/LambdaRole/Resource"
+   }
+  },
+  "LambdaRoleDefaultPolicy75625A82": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "ColdbonesStorage:ExportsOutputFnGetAttUploadBucketD2C1DA78ArnB45F3CD6"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "ColdbonesStorage:ExportsOutputFnGetAttUploadBucketD2C1DA78ArnB45F3CD6"
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:UpdateItem"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "ColdbonesStorage:ExportsOutputFnGetAttJobsTable1970BC16ArnC40C1624"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "ColdbonesStorage:ExportsOutputFnGetAttJobsTable1970BC16ArnC40C1624"
+           },
+           "/index/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "sqs:ChangeMessageVisibility",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ReceiveMessage",
+        "sqs:SendMessage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "ColdbonesQueue:ExportsOutputFnGetAttAnalysisQueue251119DFArn84F30333"
+       }
+      },
+      {
+       "Action": "sns:Publish",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefNotificationTopicEB7A0DF194E944DD"
+       }
+      },
+      {
+       "Action": [
+        "xray:PutTelemetryRecords",
+        "xray:PutTraceSegments"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": "lambda:InvokeFunction",
+       "Effect": "Allow",
+       "Resource": "arn:aws:lambda:us-east-1:253490765557:function:*"
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "LambdaRoleDefaultPolicy75625A82",
+    "Roles": [
+     {
+      "Ref": "LambdaRole3A44B857"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/LambdaRole/DefaultPolicy/Resource"
+   }
+  },
+  "PresignedUrlFnA0C73DBB": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-253490765557-us-east-1",
+     "S3Key": "cb83261f84b7a3965045e3979b3a203866b5f27a83bbab5bb18eda09f3073b90.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "UPLOAD_BUCKET": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefUploadBucketD2C1DA787A985C32"
+      },
+      "JOBS_TABLE": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefJobsTable1970BC16EDB4A824"
+      },
+      "ANALYZE_QUEUE_URL": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefAnalysisQueue251119DF5F9C404C"
+      },
+      "SNS_TOPIC_ARN": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefNotificationTopicEB7A0DF194E944DD"
+      },
+      "LM_STUDIO_URL": "https://seratonin.tail40ae2c.ts.net",
+      "LM_STUDIO_API_KEY": "lm-studio",
+      "POWERTOOLS_SERVICE_NAME": "coldbones"
+     }
+    },
+    "Handler": "handler.handler",
+    "MemorySize": 128,
+    "Role": {
+     "Fn::GetAtt": [
+      "LambdaRole3A44B857",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "Timeout": 10,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "LambdaRoleDefaultPolicy75625A82",
+    "LambdaRole3A44B857"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/PresignedUrlFn/Resource",
+    "aws:asset:path": "asset.cb83261f84b7a3965045e3979b3a203866b5f27a83bbab5bb18eda09f3073b90",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "AnalyzeOrchestratorFnE1E60EDA": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-253490765557-us-east-1",
+     "S3Key": "52592bc595de9fb16b4d5a972535b3263d050a7f987d63423c5fbc169dc89492.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "UPLOAD_BUCKET": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefUploadBucketD2C1DA787A985C32"
+      },
+      "JOBS_TABLE": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefJobsTable1970BC16EDB4A824"
+      },
+      "ANALYZE_QUEUE_URL": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefAnalysisQueue251119DF5F9C404C"
+      },
+      "SNS_TOPIC_ARN": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefNotificationTopicEB7A0DF194E944DD"
+      },
+      "LM_STUDIO_URL": "https://seratonin.tail40ae2c.ts.net",
+      "LM_STUDIO_API_KEY": "lm-studio",
+      "POWERTOOLS_SERVICE_NAME": "coldbones"
+     }
+    },
+    "Handler": "handler.handler",
+    "MemorySize": 512,
+    "Role": {
+     "Fn::GetAtt": [
+      "LambdaRole3A44B857",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "Timeout": 300,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "LambdaRoleDefaultPolicy75625A82",
+    "LambdaRole3A44B857"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/AnalyzeOrchestratorFn/Resource",
+    "aws:asset:path": "asset.52592bc595de9fb16b4d5a972535b3263d050a7f987d63423c5fbc169dc89492",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "AnalyzeRouterFn6D708449": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-253490765557-us-east-1",
+     "S3Key": "05b7c95e4e3f638d17ff37a19fc57f1d4bbfcb20adb02dabbfecb93e5c9ac083.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "UPLOAD_BUCKET": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefUploadBucketD2C1DA787A985C32"
+      },
+      "JOBS_TABLE": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefJobsTable1970BC16EDB4A824"
+      },
+      "ANALYZE_QUEUE_URL": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefAnalysisQueue251119DF5F9C404C"
+      },
+      "SNS_TOPIC_ARN": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefNotificationTopicEB7A0DF194E944DD"
+      },
+      "LM_STUDIO_URL": "https://seratonin.tail40ae2c.ts.net",
+      "LM_STUDIO_API_KEY": "lm-studio",
+      "POWERTOOLS_SERVICE_NAME": "coldbones",
+      "ORCHESTRATOR_FUNCTION": {
+       "Ref": "AnalyzeOrchestratorFnE1E60EDA"
+      }
+     }
+    },
+    "Handler": "handler.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "LambdaRole3A44B857",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "Timeout": 360,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "LambdaRoleDefaultPolicy75625A82",
+    "LambdaRole3A44B857"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/AnalyzeRouterFn/Resource",
+    "aws:asset:path": "asset.05b7c95e4e3f638d17ff37a19fc57f1d4bbfcb20adb02dabbfecb93e5c9ac083",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "BatchProcessorFn54409F22": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-253490765557-us-east-1",
+     "S3Key": "a3b05936b64bc4952d0548365892d2440b9b4ca9ab73bf53cd8c460b0f3f8d09.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "UPLOAD_BUCKET": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefUploadBucketD2C1DA787A985C32"
+      },
+      "JOBS_TABLE": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefJobsTable1970BC16EDB4A824"
+      },
+      "ANALYZE_QUEUE_URL": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefAnalysisQueue251119DF5F9C404C"
+      },
+      "SNS_TOPIC_ARN": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefNotificationTopicEB7A0DF194E944DD"
+      },
+      "LM_STUDIO_URL": "https://seratonin.tail40ae2c.ts.net",
+      "LM_STUDIO_API_KEY": "lm-studio",
+      "POWERTOOLS_SERVICE_NAME": "coldbones"
+     }
+    },
+    "Handler": "handler.handler",
+    "MemorySize": 512,
+    "Role": {
+     "Fn::GetAtt": [
+      "LambdaRole3A44B857",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "Timeout": 600,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "LambdaRoleDefaultPolicy75625A82",
+    "LambdaRole3A44B857"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/BatchProcessorFn/Resource",
+    "aws:asset:path": "asset.a3b05936b64bc4952d0548365892d2440b9b4ca9ab73bf53cd8c460b0f3f8d09",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "BatchProcessorFnSqsEventSourceColdbonesQueueAnalysisQueueB1C89DDA0444EAA6": {
+   "Type": "AWS::Lambda::EventSourceMapping",
+   "Properties": {
+    "BatchSize": 1,
+    "Enabled": true,
+    "EventSourceArn": {
+     "Fn::ImportValue": "ColdbonesQueue:ExportsOutputFnGetAttAnalysisQueue251119DFArn84F30333"
+    },
+    "FunctionName": {
+     "Ref": "BatchProcessorFn54409F22"
+    },
+    "FunctionResponseTypes": [
+     "ReportBatchItemFailures"
+    ],
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/BatchProcessorFn/SqsEventSource:ColdbonesQueueAnalysisQueueB1C89DDA/Resource"
+   }
+  },
+  "JobStatusFnD52FFA82": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-253490765557-us-east-1",
+     "S3Key": "d47917bf9c3d25f6a9aca9d4e5b09d8f5960cefc71049fd9d4fe643e11bcd2fe.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "UPLOAD_BUCKET": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefUploadBucketD2C1DA787A985C32"
+      },
+      "JOBS_TABLE": {
+       "Fn::ImportValue": "ColdbonesStorage:ExportsOutputRefJobsTable1970BC16EDB4A824"
+      },
+      "ANALYZE_QUEUE_URL": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefAnalysisQueue251119DF5F9C404C"
+      },
+      "SNS_TOPIC_ARN": {
+       "Fn::ImportValue": "ColdbonesQueue:ExportsOutputRefNotificationTopicEB7A0DF194E944DD"
+      },
+      "LM_STUDIO_URL": "https://seratonin.tail40ae2c.ts.net",
+      "LM_STUDIO_API_KEY": "lm-studio",
+      "POWERTOOLS_SERVICE_NAME": "coldbones"
+     }
+    },
+    "Handler": "handler.handler",
+    "MemorySize": 128,
+    "Role": {
+     "Fn::GetAtt": [
+      "LambdaRole3A44B857",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "Timeout": 10,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "LambdaRoleDefaultPolicy75625A82",
+    "LambdaRole3A44B857"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/JobStatusFn/Resource",
+    "aws:asset:path": "asset.d47917bf9c3d25f6a9aca9d4e5b09d8f5960cefc71049fd9d4fe643e11bcd2fe",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "ApiAccessLog3B08078D": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "RetentionInDays": 7,
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/ApiAccessLog/Resource"
+   }
+  },
+  "RestApi0C43BF4B": {
+   "Type": "AWS::ApiGateway::RestApi",
+   "Properties": {
+    "BinaryMediaTypes": [
+     "*/*"
+    ],
+    "Description": "Coldbones REST API — LM Studio inference via Tailscale Funnel",
+    "Name": "coldbones-api",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Resource"
+   }
+  },
+  "RestApiDeployment180EC503b4862547db0b578092ca9b1e66eac727": {
+   "Type": "AWS::ApiGateway::Deployment",
+   "Properties": {
+    "Description": "Coldbones REST API — LM Studio inference via Tailscale Funnel",
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "DependsOn": [
+    "RestApiapianalyzeOPTIONSF0430B90",
+    "RestApiapianalyzePOST58125C01",
+    "RestApiapianalyze2FCBF780",
+    "RestApiapihealthGETEDF5EB9C",
+    "RestApiapihealthOPTIONSDC21E52E",
+    "RestApiapihealthF8B286C6",
+    "RestApiapiOPTIONSA1D09B9B",
+    "RestApiapipresignOPTIONS3ABA81FC",
+    "RestApiapipresignPOST4782505F",
+    "RestApiapipresign9139AB76",
+    "RestApiapiC55947A1",
+    "RestApiapistatusjobIdGET4F380C28",
+    "RestApiapistatusjobIdOPTIONSCE10A839",
+    "RestApiapistatusjobIdA9C0C1AC",
+    "RestApiapistatusOPTIONS196A0780",
+    "RestApiapistatus08022940",
+    "RestApiOPTIONS6AA64D2D"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Deployment/Resource",
+    "aws:cdk:do-not-refactor": true
+   }
+  },
+  "RestApiDeploymentStagev1FE0EB7F7": {
+   "Type": "AWS::ApiGateway::Stage",
+   "Properties": {
+    "AccessLogSetting": {
+     "DestinationArn": {
+      "Fn::GetAtt": [
+       "ApiAccessLog3B08078D",
+       "Arn"
+      ]
+     },
+     "Format": "{\"requestId\":\"$context.requestId\",\"ip\":\"$context.identity.sourceIp\",\"user\":\"$context.identity.user\",\"caller\":\"$context.identity.caller\",\"requestTime\":\"$context.requestTime\",\"httpMethod\":\"$context.httpMethod\",\"resourcePath\":\"$context.resourcePath\",\"status\":\"$context.status\",\"protocol\":\"$context.protocol\",\"responseLength\":\"$context.responseLength\"}"
+    },
+    "DeploymentId": {
+     "Ref": "RestApiDeployment180EC503b4862547db0b578092ca9b1e66eac727"
+    },
+    "MethodSettings": [
+     {
+      "DataTraceEnabled": false,
+      "HttpMethod": "*",
+      "MetricsEnabled": true,
+      "ResourcePath": "/*",
+      "ThrottlingBurstLimit": 50,
+      "ThrottlingRateLimit": 20
+     }
+    ],
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    },
+    "StageName": "v1",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "TracingEnabled": true
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/DeploymentStage.v1/Resource"
+   }
+  },
+  "RestApiOPTIONS6AA64D2D": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Requested-With'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+        "method.response.header.Access-Control-Max-Age": "'3600'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true,
+       "method.response.header.Access-Control-Max-Age": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Fn::GetAtt": [
+      "RestApi0C43BF4B",
+      "RootResourceId"
+     ]
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/OPTIONS/Resource"
+   }
+  },
+  "RestApiapiC55947A1": {
+   "Type": "AWS::ApiGateway::Resource",
+   "Properties": {
+    "ParentId": {
+     "Fn::GetAtt": [
+      "RestApi0C43BF4B",
+      "RootResourceId"
+     ]
+    },
+    "PathPart": "api",
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/Resource"
+   }
+  },
+  "RestApiapiOPTIONSA1D09B9B": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Requested-With'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+        "method.response.header.Access-Control-Max-Age": "'3600'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true,
+       "method.response.header.Access-Control-Max-Age": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "RestApiapiC55947A1"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/OPTIONS/Resource"
+   }
+  },
+  "RestApiapihealthF8B286C6": {
+   "Type": "AWS::ApiGateway::Resource",
+   "Properties": {
+    "ParentId": {
+     "Ref": "RestApiapiC55947A1"
+    },
+    "PathPart": "health",
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/health/Resource"
+   }
+  },
+  "RestApiapihealthOPTIONSDC21E52E": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Requested-With'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+        "method.response.header.Access-Control-Max-Age": "'3600'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true,
+       "method.response.header.Access-Control-Max-Age": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "RestApiapihealthF8B286C6"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/health/OPTIONS/Resource"
+   }
+  },
+  "RestApiapihealthGETEDF5EB9C": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "AuthorizationType": "NONE",
+    "HttpMethod": "GET",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseTemplates": {
+        "application/json": "{\"status\":\"ok\",\"model\":\"qwen3.5\",\"provider\":\"LM Studio (Seratonin)\",\"lm_studio_url\":\"https://seratonin.tail40ae2c.ts.net\",\"model_loaded\":true}"
+       },
+       "StatusCode": "200"
+      }
+     ],
+     "PassthroughBehavior": "NEVER",
+     "RequestTemplates": {
+      "application/json": "{\"statusCode\": 200}"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "StatusCode": "200"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "RestApiapihealthF8B286C6"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/health/GET/Resource"
+   }
+  },
+  "RestApiapipresign9139AB76": {
+   "Type": "AWS::ApiGateway::Resource",
+   "Properties": {
+    "ParentId": {
+     "Ref": "RestApiapiC55947A1"
+    },
+    "PathPart": "presign",
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/presign/Resource"
+   }
+  },
+  "RestApiapipresignOPTIONS3ABA81FC": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Requested-With'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+        "method.response.header.Access-Control-Max-Age": "'3600'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true,
+       "method.response.header.Access-Control-Max-Age": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "RestApiapipresign9139AB76"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/presign/OPTIONS/Resource"
+   }
+  },
+  "RestApiapipresignPOSTApiPermissionColdbonesApiRestApi21D6C66BPOSTapipresignBC157C04": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "PresignedUrlFnA0C73DBB",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:253490765557:",
+       {
+        "Ref": "RestApi0C43BF4B"
+       },
+       "/",
+       {
+        "Ref": "RestApiDeploymentStagev1FE0EB7F7"
+       },
+       "/POST/api/presign"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/presign/POST/ApiPermission.ColdbonesApiRestApi21D6C66B.POST..api.presign"
+   }
+  },
+  "RestApiapipresignPOSTApiPermissionTestColdbonesApiRestApi21D6C66BPOSTapipresign71D8FD7E": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "PresignedUrlFnA0C73DBB",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:253490765557:",
+       {
+        "Ref": "RestApi0C43BF4B"
+       },
+       "/test-invoke-stage/POST/api/presign"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/presign/POST/ApiPermission.Test.ColdbonesApiRestApi21D6C66B.POST..api.presign"
+   }
+  },
+  "RestApiapipresignPOST4782505F": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "AuthorizationType": "NONE",
+    "HttpMethod": "POST",
+    "Integration": {
+     "IntegrationHttpMethod": "POST",
+     "Type": "AWS_PROXY",
+     "Uri": {
+      "Fn::Join": [
+       "",
+       [
+        "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+        {
+         "Fn::GetAtt": [
+          "PresignedUrlFnA0C73DBB",
+          "Arn"
+         ]
+        },
+        "/invocations"
+       ]
+      ]
+     }
+    },
+    "ResourceId": {
+     "Ref": "RestApiapipresign9139AB76"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/presign/POST/Resource"
+   }
+  },
+  "RestApiapianalyze2FCBF780": {
+   "Type": "AWS::ApiGateway::Resource",
+   "Properties": {
+    "ParentId": {
+     "Ref": "RestApiapiC55947A1"
+    },
+    "PathPart": "analyze",
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/analyze/Resource"
+   }
+  },
+  "RestApiapianalyzeOPTIONSF0430B90": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Requested-With'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+        "method.response.header.Access-Control-Max-Age": "'3600'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true,
+       "method.response.header.Access-Control-Max-Age": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "RestApiapianalyze2FCBF780"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/analyze/OPTIONS/Resource"
+   }
+  },
+  "RestApiapianalyzePOSTApiPermissionColdbonesApiRestApi21D6C66BPOSTapianalyzeE6A08C6B": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "AnalyzeRouterFn6D708449",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:253490765557:",
+       {
+        "Ref": "RestApi0C43BF4B"
+       },
+       "/",
+       {
+        "Ref": "RestApiDeploymentStagev1FE0EB7F7"
+       },
+       "/POST/api/analyze"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/analyze/POST/ApiPermission.ColdbonesApiRestApi21D6C66B.POST..api.analyze"
+   }
+  },
+  "RestApiapianalyzePOSTApiPermissionTestColdbonesApiRestApi21D6C66BPOSTapianalyzeB08DF98E": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "AnalyzeRouterFn6D708449",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:253490765557:",
+       {
+        "Ref": "RestApi0C43BF4B"
+       },
+       "/test-invoke-stage/POST/api/analyze"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/analyze/POST/ApiPermission.Test.ColdbonesApiRestApi21D6C66B.POST..api.analyze"
+   }
+  },
+  "RestApiapianalyzePOST58125C01": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "AuthorizationType": "NONE",
+    "HttpMethod": "POST",
+    "Integration": {
+     "IntegrationHttpMethod": "POST",
+     "TimeoutInMillis": 29000,
+     "Type": "AWS_PROXY",
+     "Uri": {
+      "Fn::Join": [
+       "",
+       [
+        "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+        {
+         "Fn::GetAtt": [
+          "AnalyzeRouterFn6D708449",
+          "Arn"
+         ]
+        },
+        "/invocations"
+       ]
+      ]
+     }
+    },
+    "ResourceId": {
+     "Ref": "RestApiapianalyze2FCBF780"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/analyze/POST/Resource"
+   }
+  },
+  "RestApiapistatus08022940": {
+   "Type": "AWS::ApiGateway::Resource",
+   "Properties": {
+    "ParentId": {
+     "Ref": "RestApiapiC55947A1"
+    },
+    "PathPart": "status",
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/status/Resource"
+   }
+  },
+  "RestApiapistatusOPTIONS196A0780": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Requested-With'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+        "method.response.header.Access-Control-Max-Age": "'3600'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true,
+       "method.response.header.Access-Control-Max-Age": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "RestApiapistatus08022940"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/status/OPTIONS/Resource"
+   }
+  },
+  "RestApiapistatusjobIdA9C0C1AC": {
+   "Type": "AWS::ApiGateway::Resource",
+   "Properties": {
+    "ParentId": {
+     "Ref": "RestApiapistatus08022940"
+    },
+    "PathPart": "{jobId}",
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/status/{jobId}/Resource"
+   }
+  },
+  "RestApiapistatusjobIdOPTIONSCE10A839": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Requested-With'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+        "method.response.header.Access-Control-Max-Age": "'3600'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true,
+       "method.response.header.Access-Control-Max-Age": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "RestApiapistatusjobIdA9C0C1AC"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/status/{jobId}/OPTIONS/Resource"
+   }
+  },
+  "RestApiapistatusjobIdGETApiPermissionColdbonesApiRestApi21D6C66BGETapistatusjobIdB7A91840": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "JobStatusFnD52FFA82",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:253490765557:",
+       {
+        "Ref": "RestApi0C43BF4B"
+       },
+       "/",
+       {
+        "Ref": "RestApiDeploymentStagev1FE0EB7F7"
+       },
+       "/GET/api/status/*"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/status/{jobId}/GET/ApiPermission.ColdbonesApiRestApi21D6C66B.GET..api.status.{jobId}"
+   }
+  },
+  "RestApiapistatusjobIdGETApiPermissionTestColdbonesApiRestApi21D6C66BGETapistatusjobId51B3D435": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "JobStatusFnD52FFA82",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:253490765557:",
+       {
+        "Ref": "RestApi0C43BF4B"
+       },
+       "/test-invoke-stage/GET/api/status/*"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/status/{jobId}/GET/ApiPermission.Test.ColdbonesApiRestApi21D6C66B.GET..api.status.{jobId}"
+   }
+  },
+  "RestApiapistatusjobIdGET4F380C28": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "AuthorizationType": "NONE",
+    "HttpMethod": "GET",
+    "Integration": {
+     "IntegrationHttpMethod": "POST",
+     "Type": "AWS_PROXY",
+     "Uri": {
+      "Fn::Join": [
+       "",
+       [
+        "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+        {
+         "Fn::GetAtt": [
+          "JobStatusFnD52FFA82",
+          "Arn"
+         ]
+        },
+        "/invocations"
+       ]
+      ]
+     }
+    },
+    "ResourceId": {
+     "Ref": "RestApiapistatusjobIdA9C0C1AC"
+    },
+    "RestApiId": {
+     "Ref": "RestApi0C43BF4B"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/RestApi/Default/api/status/{jobId}/GET/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/22P3W6DMAyFn6X3qcfoXqDd382qVfAAlRs8lgJJhJ0ihHj3KYFOu9jV+ewj28c55E+PkG1w4K2umm1rLjCVgrpROPB5MtjBVLiW1POXTXpyrdFjLBeaVYvdpUKY3oLVYpyN3i+/3shK6UKv6YjeG1tH+//uifrOMBtnZ8W7MzKTMOyjKN7BIeiG5IBMqnU1w/Th6vfeBR9n7zwr9KZGoQFHmApi2XuTwq/4Qr51Y0dWYvdPVQrW6c0FCuKUL907kny7Kpor3d11c+J5VilrnF8/+gzig8zKuorgyg+3PIM8g2xzZWO2fbBiOoJi0R9Wo1JsjAEAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesApi/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "RestApiEndpoint0551178A": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "https://",
+      {
+       "Ref": "RestApi0C43BF4B"
+      },
+      ".execute-api.us-east-1.",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/",
+      {
+       "Ref": "RestApiDeploymentStagev1FE0EB7F7"
+      },
+      "/"
+     ]
+    ]
+   }
+  },
+  "ApiUrl": {
+   "Description": "API Gateway URL — set VITE_API_BASE_URL to this value",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "https://",
+      {
+       "Ref": "RestApi0C43BF4B"
+      },
+      ".execute-api.us-east-1.",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/",
+      {
+       "Ref": "RestApiDeploymentStagev1FE0EB7F7"
+      },
+      "/"
+     ]
+    ]
+   },
+   "Export": {
+    "Name": "ColdbonesApiUrl"
+   }
+  },
+  "LmStudioUrl": {
+   "Description": "LM Studio Tailscale Funnel URL used by Lambdas",
+   "Value": "https://seratonin.tail40ae2c.ts.net"
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

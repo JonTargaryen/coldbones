@@ -1,0 +1,670 @@
+{
+ "Resources": {
+  "HostedZoneDB99F866": {
+   "Type": "AWS::Route53::HostedZone",
+   "Properties": {
+    "HostedZoneConfig": {
+     "Comment": "Coldbones production domain"
+    },
+    "HostedZoneTags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "Name": "omlahiri.com."
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/HostedZone/Resource"
+   }
+  },
+  "Certificate4E7ABB08": {
+   "Type": "AWS::CertificateManager::Certificate",
+   "Properties": {
+    "DomainName": "omlahiri.com",
+    "DomainValidationOptions": [
+     {
+      "DomainName": "omlahiri.com",
+      "HostedZoneId": {
+       "Ref": "HostedZoneDB99F866"
+      }
+     }
+    ],
+    "SubjectAlternativeNames": [
+     "*.omlahiri.com"
+    ],
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Name",
+      "Value": "ColdbonesStorage/Certificate"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "ValidationMethod": "DNS"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/Certificate/Resource"
+   }
+  },
+  "UploadBucketD2C1DA78": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "CorsConfiguration": {
+     "CorsRules": [
+      {
+       "AllowedHeaders": [
+        "*"
+       ],
+       "AllowedMethods": [
+        "PUT",
+        "HEAD"
+       ],
+       "AllowedOrigins": [
+        "*"
+       ],
+       "MaxAge": 3600
+      }
+     ]
+    },
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+       },
+       "ExpirationInDays": 1,
+       "Id": "expire-uploads",
+       "Status": "Enabled"
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    },
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/UploadBucket/Resource"
+   }
+  },
+  "SiteBucket397A1860": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    },
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/SiteBucket/Resource"
+   }
+  },
+  "SiteBucketPolicy3AC1D0F8": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "SiteBucket397A1860"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:GetObject",
+       "Condition": {
+        "StringEquals": {
+         "AWS:SourceArn": {
+          "Fn::Join": [
+           "",
+           [
+            "arn:",
+            {
+             "Ref": "AWS::Partition"
+            },
+            ":cloudfront::",
+            {
+             "Ref": "AWS::AccountId"
+            },
+            ":distribution/",
+            {
+             "Ref": "Distribution830FAC52"
+            }
+           ]
+          ]
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "cloudfront.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "SiteBucket397A1860",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "s3:GetObject",
+       "Condition": {
+        "StringEquals": {
+         "AWS:SourceArn": {
+          "Fn::Join": [
+           "",
+           [
+            "arn:aws:cloudfront::253490765557:distribution/",
+            {
+             "Ref": "Distribution830FAC52"
+            }
+           ]
+          ]
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "cloudfront.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "SiteBucket397A1860",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/SiteBucket/Policy/Resource"
+   }
+  },
+  "OAC5B452445": {
+   "Type": "AWS::CloudFront::OriginAccessControl",
+   "Properties": {
+    "OriginAccessControlConfig": {
+     "Description": "Coldbones SPA OAC",
+     "Name": "ColdbonesStorageOACC154237C",
+     "OriginAccessControlOriginType": "s3",
+     "SigningBehavior": "always",
+     "SigningProtocol": "sigv4"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/OAC/Resource"
+   }
+  },
+  "Distribution830FAC52": {
+   "Type": "AWS::CloudFront::Distribution",
+   "Properties": {
+    "DistributionConfig": {
+     "Aliases": [
+      "app.omlahiri.com",
+      "www.omlahiri.com",
+      "omlahiri.com"
+     ],
+     "CustomErrorResponses": [
+      {
+       "ErrorCachingMinTTL": 0,
+       "ErrorCode": 403,
+       "ResponseCode": 200,
+       "ResponsePagePath": "/index.html"
+      },
+      {
+       "ErrorCachingMinTTL": 0,
+       "ErrorCode": 404,
+       "ResponseCode": 200,
+       "ResponsePagePath": "/index.html"
+      }
+     ],
+     "DefaultCacheBehavior": {
+      "AllowedMethods": [
+       "GET",
+       "HEAD",
+       "OPTIONS"
+      ],
+      "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+      "Compress": true,
+      "TargetOriginId": "ColdbonesStorageDistributionOrigin15ECB58E0",
+      "ViewerProtocolPolicy": "redirect-to-https"
+     },
+     "DefaultRootObject": "index.html",
+     "Enabled": true,
+     "HttpVersion": "http2",
+     "IPV6Enabled": true,
+     "Origins": [
+      {
+       "DomainName": {
+        "Fn::GetAtt": [
+         "SiteBucket397A1860",
+         "RegionalDomainName"
+        ]
+       },
+       "Id": "ColdbonesStorageDistributionOrigin15ECB58E0",
+       "OriginAccessControlId": {
+        "Fn::GetAtt": [
+         "OAC5B452445",
+         "Id"
+        ]
+       },
+       "S3OriginConfig": {
+        "OriginAccessIdentity": ""
+       }
+      }
+     ],
+     "PriceClass": "PriceClass_100",
+     "ViewerCertificate": {
+      "AcmCertificateArn": {
+       "Ref": "Certificate4E7ABB08"
+      },
+      "MinimumProtocolVersion": "TLSv1.2_2021",
+      "SslSupportMethod": "sni-only"
+     }
+    },
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/Distribution/Resource"
+   }
+  },
+  "AppRecordD9BF1812": {
+   "Type": "AWS::Route53::RecordSet",
+   "Properties": {
+    "AliasTarget": {
+     "DNSName": {
+      "Fn::GetAtt": [
+       "Distribution830FAC52",
+       "DomainName"
+      ]
+     },
+     "HostedZoneId": {
+      "Fn::FindInMap": [
+       "AWSCloudFrontPartitionHostedZoneIdMap",
+       {
+        "Ref": "AWS::Partition"
+       },
+       "zoneId"
+      ]
+     }
+    },
+    "HostedZoneId": {
+     "Ref": "HostedZoneDB99F866"
+    },
+    "Name": "app.omlahiri.com.",
+    "Type": "A"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/AppRecord/Resource"
+   }
+  },
+  "WwwRecordB30C9252": {
+   "Type": "AWS::Route53::RecordSet",
+   "Properties": {
+    "AliasTarget": {
+     "DNSName": {
+      "Fn::GetAtt": [
+       "Distribution830FAC52",
+       "DomainName"
+      ]
+     },
+     "HostedZoneId": {
+      "Fn::FindInMap": [
+       "AWSCloudFrontPartitionHostedZoneIdMap",
+       {
+        "Ref": "AWS::Partition"
+       },
+       "zoneId"
+      ]
+     }
+    },
+    "HostedZoneId": {
+     "Ref": "HostedZoneDB99F866"
+    },
+    "Name": "www.omlahiri.com.",
+    "Type": "A"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/WwwRecord/Resource"
+   }
+  },
+  "ApexRecord31DF5995": {
+   "Type": "AWS::Route53::RecordSet",
+   "Properties": {
+    "AliasTarget": {
+     "DNSName": {
+      "Fn::GetAtt": [
+       "Distribution830FAC52",
+       "DomainName"
+      ]
+     },
+     "HostedZoneId": {
+      "Fn::FindInMap": [
+       "AWSCloudFrontPartitionHostedZoneIdMap",
+       {
+        "Ref": "AWS::Partition"
+       },
+       "zoneId"
+      ]
+     }
+    },
+    "HostedZoneId": {
+     "Ref": "HostedZoneDB99F866"
+    },
+    "Name": "omlahiri.com.",
+    "Type": "A"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/ApexRecord/Resource"
+   }
+  },
+  "JobsTable1970BC16": {
+   "Type": "AWS::DynamoDB::Table",
+   "Properties": {
+    "AttributeDefinitions": [
+     {
+      "AttributeName": "jobId",
+      "AttributeType": "S"
+     },
+     {
+      "AttributeName": "userId",
+      "AttributeType": "S"
+     },
+     {
+      "AttributeName": "createdAt",
+      "AttributeType": "S"
+     }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "GlobalSecondaryIndexes": [
+     {
+      "IndexName": "userId-createdAt-index",
+      "KeySchema": [
+       {
+        "AttributeName": "userId",
+        "KeyType": "HASH"
+       },
+       {
+        "AttributeName": "createdAt",
+        "KeyType": "RANGE"
+       }
+      ],
+      "Projection": {
+       "ProjectionType": "ALL"
+      }
+     }
+    ],
+    "KeySchema": [
+     {
+      "AttributeName": "jobId",
+      "KeyType": "HASH"
+     }
+    ],
+    "PointInTimeRecoverySpecification": {
+     "PointInTimeRecoveryEnabled": false
+    },
+    "SSESpecification": {
+     "SSEEnabled": true
+    },
+    "TableName": "coldbones-jobs",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "TimeToLiveSpecification": {
+     "AttributeName": "ttl",
+     "Enabled": true
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/JobsTable/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/22OQU/DMAyFf8vumSkt/IBRDrsgUMuJC0oTt/LaxVPiME1R/jtqi7QeOPl9z8/WK6F8eoRip69hb+y4n6iD1Io2o9LX8J08R8HnCtKRg6D9Yoeq7t2GDg0a9nZ2V9WiZGXQC/VktOBZOz2gh1TfvTm9waxCBeklmhFlXv2pdXzwROZ2t1fOykwcbe/ZCaS2evc0kDsYgyHU7MTzNJ/8Z79SEE9dFGI3Z7aclb05fWbbQfrU3bQ0XUTOy78ol7h0fNOXC7lBNRg4eoNZObYIp/DwUxZQFlDsToFo76MTOiM06/wFDoXcoXEBAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesStorage/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "HostedZoneNameServers": {
+   "Description": "→ Squarespace Domains → omlahiri.com → DNS → Name Servers → Custom → paste these 4 values",
+   "Value": {
+    "Fn::Join": [
+     ", ",
+     {
+      "Fn::GetAtt": [
+       "HostedZoneDB99F866",
+       "NameServers"
+      ]
+     }
+    ]
+   }
+  },
+  "UploadBucketName": {
+   "Value": {
+    "Ref": "UploadBucketD2C1DA78"
+   },
+   "Export": {
+    "Name": "ColdbonesUploadBucket"
+   }
+  },
+  "SiteBucketName": {
+   "Value": {
+    "Ref": "SiteBucket397A1860"
+   },
+   "Export": {
+    "Name": "ColdbonesSiteBucket"
+   }
+  },
+  "DistributionId": {
+   "Value": {
+    "Ref": "Distribution830FAC52"
+   },
+   "Export": {
+    "Name": "ColdbonesDistributionId"
+   }
+  },
+  "CloudFrontDomain": {
+   "Description": "Usable immediately for testing before DNS is switched",
+   "Value": {
+    "Fn::GetAtt": [
+     "Distribution830FAC52",
+     "DomainName"
+    ]
+   },
+   "Export": {
+    "Name": "ColdbonesCloudfrontDomain"
+   }
+  },
+  "AppUrl": {
+   "Value": "https://app.omlahiri.com",
+   "Export": {
+    "Name": "ColdbonesAppUrl"
+   }
+  },
+  "JobsTableName": {
+   "Value": {
+    "Ref": "JobsTable1970BC16"
+   },
+   "Export": {
+    "Name": "ColdbonesJobsTable"
+   }
+  },
+  "ExportsOutputFnGetAttUploadBucketD2C1DA78ArnB45F3CD6": {
+   "Value": {
+    "Fn::GetAtt": [
+     "UploadBucketD2C1DA78",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "ColdbonesStorage:ExportsOutputFnGetAttUploadBucketD2C1DA78ArnB45F3CD6"
+   }
+  },
+  "ExportsOutputFnGetAttJobsTable1970BC16ArnC40C1624": {
+   "Value": {
+    "Fn::GetAtt": [
+     "JobsTable1970BC16",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "ColdbonesStorage:ExportsOutputFnGetAttJobsTable1970BC16ArnC40C1624"
+   }
+  },
+  "ExportsOutputRefUploadBucketD2C1DA787A985C32": {
+   "Value": {
+    "Ref": "UploadBucketD2C1DA78"
+   },
+   "Export": {
+    "Name": "ColdbonesStorage:ExportsOutputRefUploadBucketD2C1DA787A985C32"
+   }
+  },
+  "ExportsOutputRefJobsTable1970BC16EDB4A824": {
+   "Value": {
+    "Ref": "JobsTable1970BC16"
+   },
+   "Export": {
+    "Name": "ColdbonesStorage:ExportsOutputRefJobsTable1970BC16EDB4A824"
+   }
+  }
+ },
+ "Mappings": {
+  "AWSCloudFrontPartitionHostedZoneIdMap": {
+   "aws": {
+    "zoneId": "Z2FDTNDATAQYW2"
+   },
+   "aws-cn": {
+    "zoneId": "Z3RFFRIM2A3IF5"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

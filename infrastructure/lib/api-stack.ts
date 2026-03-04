@@ -149,7 +149,6 @@ export class ApiStack extends cdk.Stack {
         allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
         maxAge: cdk.Duration.hours(1),
       },
-      binaryMediaTypes: ['*/*'],
     });
 
     const api = this.restApi.root.addResource('api');

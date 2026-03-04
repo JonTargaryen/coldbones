@@ -1,0 +1,21 @@
+{
+  "version": "52.0.0",
+  "files": {
+    "e021057a100bb5a725e53b50791984be1cc7d21b9e413776fb9152055bd5b7c7": {
+      "displayName": "ColdbonesQueue Template",
+      "source": {
+        "path": "ColdbonesQueue.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "253490765557-us-east-1-cd55b611": {
+          "bucketName": "cdk-hnb659fds-assets-253490765557-us-east-1",
+          "objectKey": "e021057a100bb5a725e53b50791984be1cc7d21b9e413776fb9152055bd5b7c7.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::253490765557:role/cdk-hnb659fds-file-publishing-role-253490765557-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

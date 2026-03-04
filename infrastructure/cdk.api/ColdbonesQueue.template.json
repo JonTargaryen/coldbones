@@ -1,0 +1,169 @@
+{
+ "Resources": {
+  "AnalysisDlqF1946B7D": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "MessageRetentionPeriod": 1209600,
+    "QueueName": "coldbones-analysis-dlq",
+    "SqsManagedSseEnabled": true,
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesQueue/AnalysisDlq/Resource"
+   }
+  },
+  "AnalysisQueue251119DF": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "MessageRetentionPeriod": 345600,
+    "QueueName": "coldbones-analysis",
+    "ReceiveMessageWaitTimeSeconds": 20,
+    "RedrivePolicy": {
+     "deadLetterTargetArn": {
+      "Fn::GetAtt": [
+       "AnalysisDlqF1946B7D",
+       "Arn"
+      ]
+     },
+     "maxReceiveCount": 3
+    },
+    "SqsManagedSseEnabled": true,
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "VisibilityTimeout": 960
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesQueue/AnalysisQueue/Resource"
+   }
+  },
+  "NotificationTopicEB7A0DF1": {
+   "Type": "AWS::SNS::Topic",
+   "Properties": {
+    "DisplayName": "Coldbones Job Notifications",
+    "Tags": [
+     {
+      "Key": "ManagedBy",
+      "Value": "CDK"
+     },
+     {
+      "Key": "Project",
+      "Value": "Coldbones"
+     }
+    ],
+    "TopicName": "coldbones-notifications"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesQueue/NotificationTopic/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/yXISw6DIBRG4bU4h7+UuIMuoOljbhBpcrVF6+XqgLB3o47Ol2Nh6ytM5VbWvhv0l1rkV3J+UG7lJvOfkR8SJKjbJx4oiiMjv8eJ/D4PlLLzLmmSVFQcu4CeL4s1sAam6plIzxIT/QKeZzel519BewAAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "ColdbonesQueue/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "QueueUrl": {
+   "Value": {
+    "Ref": "AnalysisQueue251119DF"
+   },
+   "Export": {
+    "Name": "ColdbonesQueueUrl"
+   }
+  },
+  "TopicArn": {
+   "Value": {
+    "Ref": "NotificationTopicEB7A0DF1"
+   },
+   "Export": {
+    "Name": "ColdbonesTopicArn"
+   }
+  },
+  "ExportsOutputFnGetAttAnalysisQueue251119DFArn84F30333": {
+   "Value": {
+    "Fn::GetAtt": [
+     "AnalysisQueue251119DF",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "ColdbonesQueue:ExportsOutputFnGetAttAnalysisQueue251119DFArn84F30333"
+   }
+  },
+  "ExportsOutputRefNotificationTopicEB7A0DF194E944DD": {
+   "Value": {
+    "Ref": "NotificationTopicEB7A0DF1"
+   },
+   "Export": {
+    "Name": "ColdbonesQueue:ExportsOutputRefNotificationTopicEB7A0DF194E944DD"
+   }
+  },
+  "ExportsOutputRefAnalysisQueue251119DF5F9C404C": {
+   "Value": {
+    "Ref": "AnalysisQueue251119DF"
+   },
+   "Export": {
+    "Name": "ColdbonesQueue:ExportsOutputRefAnalysisQueue251119DF5F9C404C"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
