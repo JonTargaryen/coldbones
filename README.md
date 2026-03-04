@@ -1218,10 +1218,76 @@ Be factual and specific. Do not speculate beyond what is clearly visible.
 
 ---
 
-## Quick Start (Coming Soon)
+## Local Development
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- A local OpenAI-compatible model endpoint (default: `http://localhost:1234/v1`)
+- Poppler tools for PDF conversion (`pdf2image` dependency)
+
+Ubuntu/Debian:
 
 ```bash
-# Prerequisites: Node.js 18+, AWS CLI configured, CDK CLI installed
+sudo apt-get update
+sudo apt-get install -y poppler-utils
+```
+
+### Install Dependencies
+
+```bash
+# Backend
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Frontend
+cd ../frontend
+npm install
+
+# Root launcher
+cd ..
+npm install
+```
+
+### Run Everything (One Command)
+
+```bash
+npm run dev
+```
+
+This starts:
+- Backend at `http://localhost:8000`
+- Frontend at `http://localhost:5173`
+
+Press `Ctrl+C` to stop both servers together.
+
+If ports are already occupied, stop previous processes first:
+
+```bash
+npm run dev:stop
+```
+
+Validate both services and the frontend API proxy:
+
+```bash
+npm run dev:check
+```
+
+### Optional Environment Variables (Backend)
+
+- `LM_STUDIO_URL` (default: `http://localhost:1234/v1`)
+- `LM_STUDIO_MODEL` (default: auto-detect first loaded model)
+- `MAX_FILE_SIZE` (default: `20971520` bytes / 20 MB)
+- `MAX_INFERENCE_TOKENS` (default: `16384`)
+- `PORT` (default: `8000`)
+
+## Cloud Deployment Quick Start
+
+```bash
+# Prerequisites: AWS CLI configured, CDK CLI installed
 
 # Deploy infrastructure
 cd infrastructure
@@ -1236,6 +1302,6 @@ aws s3 sync dist/ s3://<static-site-bucket>
 
 # Test model server (from within VPC)
 curl http://<model-server-ip>:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"qwen3.5","messages":[{"role":"user","content":"Hello!"}]}'
+   -H "Content-Type: application/json" \
+   -d '{"model":"qwen3.5","messages":[{"role":"user","content":"Hello!"}]}'
 ```

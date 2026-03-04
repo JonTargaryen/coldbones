@@ -1,0 +1,10 @@
+{
+  "name": "coldbones",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "bash ./scripts/dev.sh",
+    "dev:stop": "bash ./scripts/dev-stop.sh",
+    "dev:check": "bash ./scripts/dev-check.sh"
+  }
+}

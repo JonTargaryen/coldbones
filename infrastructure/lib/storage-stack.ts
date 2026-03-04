@@ -28,7 +28,7 @@ export class StorageStack extends cdk.Stack {
       lifecycleRules: [
         {
           id: 'expire-uploads',
-          expiration: cdk.Duration.days(7),
+          expiration: cdk.Duration.days(1),
           abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
         },
       ],
@@ -154,6 +154,14 @@ export class StorageStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'UploadBucketName', {
       value: this.uploadBucket.bucketName,
       exportName: 'ColdbonesUploadBucket',
+    });
+    new cdk.CfnOutput(this, 'SiteBucketName', {
+      value: this.siteBucket.bucketName,
+      exportName: 'ColdbonesSiteBucket',
+    });
+    new cdk.CfnOutput(this, 'DistributionId', {
+      value: this.distribution.distributionId,
+      exportName: 'ColdbonesDistributionId',
     });
     new cdk.CfnOutput(this, 'SiteUrl', {
       value: `https://${this.distribution.distributionDomainName}`,

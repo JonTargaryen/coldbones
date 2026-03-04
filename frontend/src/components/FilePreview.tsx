@@ -139,7 +139,7 @@ export function FilePreview({ file, files, onSelect, onRemove }: FilePreviewProp
               >
                 ×
               </button>
-              <StatusBadge status={f.status} />
+              <StatusBadge status={f.status} progress={f.progress} />
             </div>
           ))}
         </div>
@@ -236,9 +236,14 @@ export function FilePreview({ file, files, onSelect, onRemove }: FilePreviewProp
   );
 }
 
-function StatusBadge({ status }: { status: UploadedFile['status'] }) {
+function StatusBadge({ status, progress }: { status: UploadedFile['status']; progress: number }) {
   const labels: Record<UploadedFile['status'], string> = {
-    pending: '', uploading: '⏳', uploaded: '✓', analyzing: '🔄', complete: '✅', error: '❌',
+    pending: '',
+    uploading: `${Math.max(0, Math.min(100, Math.round(progress)))}%`,
+    uploaded: '✓',
+    analyzing: '🔄',
+    complete: '✅',
+    error: '❌',
   };
   if (!labels[status]) return null;
   return <span className={`status-badge status-${status}`} aria-label={`Status: ${status}`}>{labels[status]}</span>;

@@ -4,12 +4,15 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { useUpload } from './hooks/useUpload';
 import { useAnalysis } from './hooks/useAnalysis';
 import { useSlowAnalysis } from './hooks/useSlowAnalysis';
+import { useWebSocket } from './hooks/useWebSocket';
+import type { AnalysisResult } from './types';
 import { UploadZone } from './components/UploadZone';
 import { FilePreview } from './components/FilePreview';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { ModeToggle } from './components/ModeToggle';
 import { JobTracker } from './components/JobTracker';
 import { LanguagePicker } from './components/LanguagePicker';
+import { validateBatchSize } from './utils/validation';
 import './App.css';
 
 type HealthStatus = 'checking' | 'online' | 'model-missing' | 'offline';
@@ -96,11 +99,31 @@ function AppContent() {
   const { lang, t } = useLanguage();
   const { files, addFiles, removeFile, clearFiles, updateFile } = useUpload();
   const { results, isAnalyzing, currentFileId, error, analyzeAll, clearResults } = useAnalysis();
-  const { jobs, isSubmitting, submitSlowJob, clearJobs } = useSlowAnalysis();
+  const { jobs, isSubmitting, submitSlowJob, applyJobEvent, clearJobs } = useSlowAnalysis();
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const health = useHealthCheck();
+
+  useWebSocket({
+    onMessage: (msg) => {
+      if (!msg.jobId) return;
+      if (msg.type === 'job_complete') {
+        applyJobEvent({
+          jobId: msg.jobId,
+          status: 'complete',
+          result: msg.result as AnalysisResult | undefined,
+        });
+      } else if (msg.type === 'job_failed') {
+        applyJobEvent({
+          jobId: msg.jobId,
+          status: 'failed',
+          error: msg.error,
+        });
+      }
+    },
+  });
 
   useEffect(() => {
     if (isAnalyzing) {
@@ -130,6 +153,7 @@ function AppContent() {
 
   const handleFilesAdded = useCallback((newFiles: File[]) => {
     const added = addFiles(newFiles);
+    setSubmissionError(null);
     if (added.length > 0 && !selectedFileId) {
       setSelectedFileId(added[0].id);
     }
@@ -144,13 +168,23 @@ function AppContent() {
   }, [removeFile, selectedFileId, files]);
 
   const handleAnalyze = useCallback(async () => {
-    const validFiles = files.filter(f => f.status !== 'error');
-    if (validFiles.length === 0) return;
+    const analyzableFiles = files.filter(
+      f => f.status !== 'error' && f.status !== 'uploading' && f.status !== 'pending',
+    );
+    if (analyzableFiles.length === 0) return;
+
+    const batchError = validateBatchSize(analyzableFiles.length, mode);
+    if (batchError) {
+      setSubmissionError(batchError);
+      return;
+    }
+
+    setSubmissionError(null);
 
     if (mode === 'slow') {
-      await submitSlowJob(validFiles, lang);
+      await submitSlowJob(analyzableFiles, lang);
     } else {
-      await analyzeAll(validFiles, mode, (fileId, status) => {
+      await analyzeAll(analyzableFiles, mode, (fileId, status) => {
         updateFile(fileId, { status });
       }, lang);
     }
@@ -160,13 +194,17 @@ function AppContent() {
     clearFiles();
     clearResults();
     clearJobs();
+    setSubmissionError(null);
     setSelectedFileId(null);
   }, [clearFiles, clearResults, clearJobs]);
 
   const selectedFile = files.find(f => f.id === selectedFileId) ?? null;
   const selectedResult = selectedFileId ? results.get(selectedFileId) ?? null : null;
   const currentFile = currentFileId ? files.find(f => f.id === currentFileId) : null;
-  const validFileCount = files.filter(f => f.status !== 'error').length;
+  const analyzableFileCount = files.filter(
+    f => f.status !== 'error' && f.status !== 'uploading' && f.status !== 'pending',
+  ).length;
+  const hasUploadsInProgress = files.some(f => f.status === 'uploading' || f.status === 'pending');
   const isBusy = isAnalyzing || isSubmitting;
 
   return (
@@ -196,12 +234,12 @@ function AppContent() {
               <button
                 className="btn btn-primary"
                 onClick={handleAnalyze}
-                disabled={isBusy || validFileCount === 0 || health.status !== 'online'}
+                disabled={isBusy || hasUploadsInProgress || analyzableFileCount === 0 || health.status !== 'online'}
                 aria-busy={isBusy}
               >
                 {isBusy
                   ? (mode === 'slow' ? t.submittingBtn : t.analyzingBtn)
-                  : t.analyzeBtn(validFileCount)}
+                  : t.analyzeBtn(analyzableFileCount)}
               </button>
               <button
                 className="btn btn-secondary"
@@ -210,6 +248,13 @@ function AppContent() {
               >
                 {t.clearAll}
               </button>
+            </div>
+          )}
+
+          {submissionError && (
+            <div className="analysis-error" role="alert" aria-live="polite">
+              <h3>{t.analysisError}</h3>
+              <p>{submissionError}</p>
             </div>
           )}
 
