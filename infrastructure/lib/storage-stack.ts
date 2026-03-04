@@ -201,7 +201,7 @@ export class StorageStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       timeToLiveAttribute: 'ttl',
       // PITR disabled — jobs are ephemeral, no recovery value vs ~$0.20/GB/month cost.
-      pointInTimeRecovery: false,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: false },
     });
 
     this.jobsTable.addGlobalSecondaryIndex({

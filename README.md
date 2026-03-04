@@ -1,6 +1,6 @@
 # Coldbones
 
-> Upload an image or PDF. Get intelligent analysis back. Powered by **Amazon Bedrock** (Claude 3.5 Sonnet v2).
+> Upload an image or PDF. Get intelligent analysis back. Inference runs locally on a desktop RTX 5090 via [LM Studio](https://lmstudio.ai), reachable from AWS via Tailscale Funnel.
 
 ---
 
@@ -9,12 +9,11 @@
 1. [Architecture](#architecture)
 2. [Prerequisites](#prerequisites)
 3. [Deploy to AWS](#deploy-to-aws)
-4. [Point Your Domain](#point-your-domain)
-5. [Deploy the Frontend](#deploy-the-frontend)
-6. [Local Development](#local-development)
+4. [Deploy the Frontend](#deploy-the-frontend)
+5. [Local Development](#local-development)
+6. [Desktop Worker](#desktop-worker)
 7. [Project Structure](#project-structure)
-8. [Fast & Slow Modes](#fast--slow-modes)
-9. [Environment Variables](#environment-variables)
+8. [Environment Variables](#environment-variables)
 
 ---
 
@@ -23,106 +22,135 @@
 ```
 Browser
   │  (1) POST /api/presign  →  presigned S3 PUT URL
-  │  (2) PUT file directly to S3
-  │  (3) POST /api/analyze  →  fast: sync Bedrock response
-  │                            slow: SQS job, poll /api/status/{jobId}
+  │  (2) PUT file directly to S3  (no Lambda, full throughput)
+  │  (3) POST /api/analyze  →  202 + jobId
+  │  (4) GET  /api/status/{jobId}  (poll every 4 s)
   │
   ▼
 CloudFront (app.omlahiri.com)
-  ├── /api/*  →  API Gateway  →  Lambda (Python + boto3)
+  ├── /api/*  →  API Gateway  →  Lambda (Python)
   │                                    │
-  │                              Amazon Bedrock
-  │                        (anthropic.claude-3-5-sonnet-20241022-v2:0)
+  │                     fast path: async Lambda invoke → analyze_orchestrator
+  │                    (desktop unreachable: fallback to SQS queue below)
+  │
+  │                     offline path: SQS queue
+  │                          │
+  │                     Desktop worker (home RTX 5090)
+  │                          │  long-polls SQS
+  │                          └→ LM Studio (Qwen3.5-35B, via Tailscale Funnel)
+  │                                    │
+  │                          DynamoDB job record ← writes result
   │
   └── /*  →  S3 (React SPA)
 ```
+
+### How it works
+
+1. **Presign** — `/api/presign` returns a signed S3 PUT URL scoped to a single key, content type, and 5-minute expiry.
+2. **Upload** — browser PUTs the file directly to S3, bypassing Lambda's 10 MB limit.
+3. **Analyze** — `/api/analyze` accepts `{s3Key, lang, mode}` and always returns `202 + jobId` immediately.
+   - **fast** mode: `analyze_router` checks if the desktop is alive (pings `/v1/models`). If yes, it invokes `analyze_orchestrator` asynchronously and returns. If the desktop is offline, it falls back to the SQS queue.
+   - **offline** mode: always enqueues to SQS; the desktop worker picks it up when available.
+4. **Status** — browser polls `/api/status/{jobId}` which reads DynamoDB. Terminal states: `COMPLETED` (with result) or `FAILED` (with error message).
+5. **Desktop worker** — `worker/worker.py` runs on the RTX 5090. It long-polls SQS, downloads uploads from S3, calls LM Studio locally, and writes results back to DynamoDB.
 
 ### CDK Stacks
 
 | Stack | Resources |
 |---|---|
-| **ColdbonesStorage** | S3 (upload + site), CloudFront, DynamoDB, Route53, ACM |
+| **ColdbonesStorage** | S3 (uploads + site), CloudFront, DynamoDB, Route53, ACM |
 | **ColdbonesQueue** | SQS (main + DLQ), SNS |
-| **ColdbonesApi** | Lambda × 5, API Gateway, IAM (Bedrock) |
+| **ColdbonesApi** | Lambda × 5, API Gateway, IAM |
 
 ---
 
 ## Prerequisites
 
 1. **AWS CLI** configured (`aws configure`) for `us-east-1`
-2. **Bedrock model access** enabled in the AWS Console
-   → *Bedrock → Model access → Request access* → enable **Claude 3.5 Sonnet v2**
-3. **Node.js 20+** and **Python 3.12+** installed
-4. CDK dependencies installed:
+2. **Node.js 20+** and **Python 3.12+** installed
+3. CDK dependencies installed:
    ```bash
    cd infrastructure && npm install
    ```
+4. Desktop worker set up — see [worker/SETUP.md](worker/SETUP.md)
 
 ---
 
 ## Deploy to AWS
 
 ```bash
-# From the repo root:
+# From the repo root — deploys Storage → Queue → Api in order:
 ./scripts/deploy.sh
+
+# Or deploy individual stacks:
+./scripts/deploy.sh storage
+./scripts/deploy.sh queue
+./scripts/deploy.sh api
 ```
 
-This bootstraps CDK (if needed) then deploys all three stacks in order.
-At the end, the script prints the **Route 53 nameservers** you need to paste into Squarespace.
+First-time deploy order:
 
-> **Immediate testing** — you can use the CloudFront URL shown in the `CloudFrontDomain` output right away, before DNS changes.
+```
+1. deploy.sh storage   → creates S3, CloudFront, DynamoDB
+2. deploy.sh queue     → creates SQS queue (needed by Api lambdas)
+3. deploy.sh api       → creates Lambdas + API Gateway
+4. Set cdk.json:       coldbones.apiGatewayDomain = <domain from cdk-outputs.json>
+5. deploy.sh storage   → adds CloudFront /api/* behavior pointing at API Gateway
+6. deploy-frontend.sh  → builds React app and syncs to S3
+```
 
----
-
-## Point Your Domain
-
-After `deploy.sh` completes, copy the four nameservers from the output (e.g. `ns-XXXX.awsdns-XX.com`).
-
-1. Log in to [Squarespace Domains](https://account.squarespace.com/domains)
-2. Select **omlahiri.com** → **DNS Settings** → **Nameservers**
-3. Switch to **Custom nameservers** and paste all four
-4. Save — DNS propagation typically takes 10–60 minutes.
-
-Once propagated, the app is live at **https://app.omlahiri.com**.
+After deploying, the app is live at **https://app.omlahiri.com**.
 
 ---
 
 ## Deploy the Frontend
 
-Build the React app and push it to S3:
-
 ```bash
 ./scripts/deploy-frontend.sh
 ```
 
-This reads `scripts/cdk-outputs.json` (written by `deploy.sh`) to find the bucket name
-and CloudFront distribution ID, then syncs the Vite build output and creates a cache invalidation.
+Builds the Vite app, syncs it to S3, and invalidates the CloudFront cache. Reads bucket name and distribution ID from `scripts/cdk-outputs.json`.
 
 ---
 
 ## Local Development
 
-### Backend (FastAPI)
+### Backend (FastAPI — local dev only)
+
+The `backend/` server is a local dev shim. It accepts the same API contract as the Lambda functions but runs entirely in-process: uploads are stored in memory, and inference goes directly to LM Studio via Tailscale.
 
 ```bash
 cd backend
-cp .env.example .env     # set AWS_REGION + BEDROCK_MODEL_ID if needed
 pip install -r requirements.txt
-uvicorn main:app --reload
+LM_STUDIO_URL=https://seratonin.tail40ae2c.ts.net uvicorn main:app --reload --port 8000
 ```
-
-API available at `http://localhost:8000`. AWS credentials from `aws configure` are used automatically.
 
 ### Frontend
 
 ```bash
 cd frontend
-cp .env.example .env     # set VITE_API_BASE_URL=http://localhost:8000
 npm install
-npm run dev
+npm run dev          # http://localhost:5173
 ```
 
-Open `http://localhost:5173`.
+Set `VITE_API_BASE_URL=http://localhost:8000` (or leave empty to use CloudFront in production).
+
+---
+
+## Desktop Worker
+
+The worker runs on the home RTX 5090. See **[worker/SETUP.md](worker/SETUP.md)** for full setup instructions including Tailscale Funnel config, LM Studio, and AWS SSM parameters.
+
+Quick start once the desktop is configured:
+
+```bash
+cd worker
+pip install -r requirements.txt
+cp .env.example .env   # fill in ANALYZE_QUEUE_URL, UPLOAD_BUCKET, JOBS_TABLE
+python worker.py
+```
+
+The worker long-polls SQS, downloads each uploaded file from S3, converts images/PDFs to base64 PNGs, calls LM Studio, and writes the result back to DynamoDB.
 
 ---
 
@@ -130,39 +158,31 @@ Open `http://localhost:5173`.
 
 ```
 coldbones/
-├── backend/               FastAPI local dev server
-│   ├── main.py
-│   └── requirements.txt
-├── frontend/              React + Vite + TypeScript
+├── backend/               FastAPI local-dev server (not deployed to AWS)
+├── frontend/              React + Vite + TypeScript SPA
 │   └── src/
 │       ├── components/    AnalysisPanel, FilePreview, UploadZone, …
-│       ├── hooks/         useUpload, useAnalysis, useSlowAnalysis
+│       ├── hooks/         useUpload, useAnalysis
 │       ├── i18n/          EN / HI / ES / BN translations
 │       └── types/
 ├── infrastructure/        AWS CDK (TypeScript)
-│   ├── bin/app.ts
 │   └── lib/               storage-stack, queue-stack, api-stack
 ├── lambdas/               Python Lambda handlers
-│   ├── analyze_orchestrator/   Bedrock InvokeModel (sync)
-│   ├── analyze_router/         Fast vs slow routing
-│   ├── batch_processor/        SQS → Bedrock → DynamoDB
-│   ├── get_presigned_url/      S3 presigned PUT
-│   └── job_status/             DynamoDB job polling
+│   ├── analyze_orchestrator/   Downloads S3 file → LM Studio → DynamoDB
+│   ├── analyze_router/         Routes fast (async invoke) vs offline (SQS)
+│   ├── batch_processor/        Tombstone — messages handled by desktop worker
+│   ├── get_presigned_url/      S3 presigned PUT URL generation
+│   ├── job_status/             DynamoDB job state polling
+│   └── desktop_client.py       Shared: SSM-cached LM Studio OpenAI client
+├── worker/                Desktop SQS worker (runs on RTX 5090)
+│   ├── worker.py
+│   ├── SETUP.md
+│   └── requirements.txt
 └── scripts/
-    ├── deploy.sh
-    └── deploy-frontend.sh
+    ├── deploy.sh          CDK deploy (Storage / Queue / Api)
+    ├── deploy-frontend.sh S3 sync + CloudFront invalidation
+    └── validate.sh        End-to-end API smoke test
 ```
-
----
-
-## Fast & Slow Modes
-
-| Mode | Flow | Latency |
-|---|---|---|
-| **Fast** | Sync Bedrock call through Lambda | ~5–20 s |
-| **Slow** | SQS → async Lambda → DynamoDB; browser polls `/api/status/{jobId}` | 20 s – several minutes |
-
-Select the mode before submitting. Fast mode for single images; slow mode for large PDFs.
 
 ---
 
@@ -172,20 +192,38 @@ Select the mode before submitting. Fast mode for single images; slow mode for la
 
 | Variable | Default | Description |
 |---|---|---|
-| `AWS_REGION` | `us-east-1` | AWS region |
-| `BEDROCK_MODEL_ID` | `anthropic.claude-3-5-sonnet-20241022-v2:0` | Bedrock model ID |
+| `LM_STUDIO_URL` | `http://localhost:1234` | LM Studio base URL (Tailscale Funnel for remote) |
+| `LM_STUDIO_API_KEY` | `lm-studio` | API key (LM Studio ignores value, must be non-empty) |
+| `MODEL_NAME` | `qwen/qwen3.5-35b-a3b` | Model identifier |
+| `MAX_INFERENCE_TOKENS` | `8192` | Max tokens per response |
+| `MAX_PDF_PAGES` | `20` | Max PDF pages to render and send |
 
-### Frontend (`frontend/.env`)
+### Worker (`worker/.env`)
 
-| Variable | Default (prod) | Description |
+| Variable | Required | Description |
 |---|---|---|
-| `VITE_API_BASE_URL` | *(empty — same origin via CloudFront)* | API base URL override for local dev |
+| `ANALYZE_QUEUE_URL` | ✓ | SQS queue URL (from `cdk-outputs.json`) |
+| `UPLOAD_BUCKET` | ✓ | S3 bucket name for uploads |
+| `JOBS_TABLE` | ✓ | DynamoDB table name |
+| `LM_STUDIO_URL` | ✓ | LM Studio base URL (usually `http://localhost:1234`) |
+| `MODEL_NAME` | | Defaults to `Qwen/Qwen3.5-35B-A3B-AWQ` |
+
+### Lambda environment (set via CDK / cdk.json)
+
+| Variable | Description |
+|---|---|
+| `UPLOAD_BUCKET` | S3 uploads bucket |
+| `JOBS_TABLE` | DynamoDB jobs table |
+| `ORCHESTRATOR_FUNCTION_ARN` | ARN of `analyze_orchestrator` Lambda |
+| `ANALYZE_QUEUE_URL` | SQS queue URL |
+| `/coldbones/desktop-url` *(SSM)* | Tailscale Funnel URL for LM Studio |
+| `/coldbones/desktop-port` *(SSM)* | LM Studio port (443 via Funnel) |
 
 ---
 
 ## Supported Languages
 
-- 🇬🇧 English (`en`)
-- 🇮🇳 Hindi (`hi`)
-- 🇪🇸 Spanish (`es`)
-- 🇧🇩 Bengali (`bn`)
+- English (`en`)
+- Hindi (`hi`)
+- Spanish (`es`)
+- Bengali (`bn`)

@@ -5,7 +5,7 @@
 #
 # Usage:
 #   ./scripts/deploy.sh [stack]
-#   stack: all | storage | queue | network | gpu | api  (default: all)
+#   stack: all | storage | queue | api  (default: all)
 #
 # Stack deploy order and dependencies:
 #
@@ -14,7 +14,7 @@
 #
 #   Storage owns: S3 (upload + site), CloudFront, DynamoDB, Route53, ACM
 #   Queue owns:   SQS analysis queue + DLQ, SNS notification topic
-#   Api owns:     5 Lambda functions + API Gateway REST API
+#   Api owns:     Lambda functions + HTTP API Gateway (V2)
 #
 # First-time deploy order:
 #   1. deploy.sh storage   → creates S3, CloudFront, DynamoDB
@@ -31,9 +31,10 @@
 # behavior, but Api needs Storage's bucket and table.  The workaround is to
 # deploy Api first, hardcode the domain in cdk.json, then redeploy Storage.
 #
-# NOTE: The 250 GB EBS volume created by ColdbonesGpu has RemovalPolicy=RETAIN.
-#       Destroying the stack will NOT delete the volume. This is intentional —
-#       the model data is stored there.  Delete manually if needed.
+# NOTE: After running 'deploy.sh api', copy the new API domain from
+#       scripts/cdk-outputs.json → ColdbonesApi.ApiDomain  into
+#       infrastructure/cdk.json → coldbones.apiGatewayDomain, then run
+#       'deploy.sh storage' to update the CloudFront origin.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,12 +61,10 @@ npx cdk bootstrap "aws://$(aws sts get-caller-identity --query Account --output 
   --region "$REGION" 2>&1 | tail -5
 
 _deploy_all() {
-  echo "→ Deploying all stacks: Storage → Queue → Network → Gpu → Api"
+  echo "→ Deploying all stacks: Storage → Queue → Api"
   npx cdk deploy \
     ColdbonesStorage \
     ColdbonesQueue \
-    ColdbonesNetwork \
-    ColdbonesGpu \
     ColdbonesApi \
     --require-approval never \
     --region "$REGION" \
@@ -79,17 +78,12 @@ _deploy_all() {
   if [ -f "$SCRIPT_DIR/cdk-outputs.json" ]; then
     CLOUDFRONT=$(jq -r '.ColdbonesStorage.CloudFrontDomain // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
     APP_URL=$(jq -r '.ColdbonesStorage.AppUrl // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
-    WS_URL=$(jq -r '.ColdbonesApi.WsApiUrl // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
     API_URL=$(jq -r '.ColdbonesApi.ApiUrl // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
-    GPU_VOL=$(jq -r '.ColdbonesGpu.GpuEbsVolumeId // empty' "$SCRIPT_DIR/cdk-outputs.json" 2>/dev/null || true)
 
     [ -n "$CLOUDFRONT" ] && echo "   CloudFront URL: https://$CLOUDFRONT"
     [ -n "$APP_URL"    ] && echo "   App URL:        $APP_URL"
-    [ -n "$API_URL"    ] && echo "   API (REST):     $API_URL"
-    [ -n "$WS_URL"     ] && echo "   API (WS):       $WS_URL"
-    [ -n "$GPU_VOL"    ] && echo "   GPU EBS Volume: $GPU_VOL  ← DO NOT delete manually, stores model data"
+    [ -n "$API_URL"    ] && echo "   API (HTTP):     $API_URL"
     echo ""
-    echo "   Run GPU health check:  ./scripts/gpu-startup-validate.sh"
     echo "   Run e2e validation:    ./scripts/validate.sh"
   fi
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -103,14 +97,6 @@ case "$STACK_ARG" in
   queue)
     echo "→ Deploying ColdbonesQueue…"
     npx cdk deploy ColdbonesQueue --require-approval never --region "$REGION"
-    ;;
-  network)
-    echo "→ Deploying ColdbonesNetwork…"
-    npx cdk deploy ColdbonesNetwork --require-approval never --region "$REGION"
-    ;;
-  gpu)
-    echo "→ Deploying ColdbonesGpu…"
-    npx cdk deploy ColdbonesGpu --require-approval never --region "$REGION"
     ;;
   api)
     echo "→ Deploying ColdbonesApi…"

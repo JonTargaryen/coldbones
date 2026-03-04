@@ -53,7 +53,7 @@ echo " API: $API_URL"
 echo " Region: $REGION"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-_section "1. REST API health"
+_section "1. HTTP API health"
 HEALTH=$(curl -sf "${API_URL}/api/health" 2>/dev/null || echo '{"status":"error"}')
 HSTATUS=$(echo "$HEALTH" | jq -r '.status // "error"')
 if [ "$HSTATUS" == "ok" ]; then

@@ -15,7 +15,6 @@ module.exports = {
   },
   collectCoverageFrom: [
     'lib/**/*.ts',
-    'constructs/**/*.ts',
     'bin/**/*.ts',
     '!**/*.d.ts',
   ],

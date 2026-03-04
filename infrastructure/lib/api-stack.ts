@@ -152,10 +152,12 @@ export class ApiStack extends cdk.Stack {
         environment:  { ...sharedEnv },
         role:         lambdaRole,
         tracing:      lambda.Tracing.ACTIVE,
-        // Explicit retention prevents log groups from accumulating forever
-        // (Lambda auto-creates log groups with no retention by default).
-        // CloudWatch Logs: $0.50/GB ingested + $0.03/GB/month stored.
-        logRetention: logs.RetentionDays.ONE_WEEK,
+        // Explicit log group prevents CloudWatch from creating one with no
+        // retention. CloudWatch Logs: $0.50/GB ingested + $0.03/GB/month stored.
+        logGroup: new logs.LogGroup(this, `${id}LogGroup`, {
+          retention:     logs.RetentionDays.ONE_WEEK,
+          removalPolicy: cdk.RemovalPolicy.DESTROY,
+        }),
         ...extra,
       });
     };
@@ -211,7 +213,10 @@ export class ApiStack extends cdk.Stack {
       ),
       timeout:      cdk.Duration.seconds(5),
       memorySize:   128,
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: new logs.LogGroup(this, 'HealthFnLogGroup', {
+        retention:     logs.RetentionDays.ONE_WEEK,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
     });
 
     // ─── HTTP API V2 ───────────────────────────────────────────────────────
@@ -235,7 +240,7 @@ export class ApiStack extends cdk.Stack {
     // Named 'v1' stage with throttling.
     // Throttle: 20 req/s sustained, 50 burst — the desktop processes one job
     // at a time so accepting more requests just queues them or returns errors.
-    const stage = new apigwv2.HttpStage(this, 'Stage', {
+    new apigwv2.HttpStage(this, 'Stage', {
       httpApi:    this.httpApi,
       stageName:  'v1',
       autoDeploy: true,

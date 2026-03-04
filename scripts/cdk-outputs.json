@@ -20,7 +20,7 @@
     "QueueUrl": "https://sqs.us-east-1.amazonaws.com/253490765557/coldbones-analysis"
   },
   "ColdbonesApi": {
-    "ApiUrl": "https://la0cszeq83.execute-api.us-east-1.amazonaws.com/v1/",
-    "RestApiEndpoint0551178A": "https://la0cszeq83.execute-api.us-east-1.amazonaws.com/v1/"
+    "ApiUrl": "https://m6rya8h7ab.execute-api.us-east-1.amazonaws.com/v1/",
+    "ApiDomain": "m6rya8h7ab.execute-api.us-east-1.amazonaws.com"
   }
 }
