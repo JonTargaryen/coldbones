@@ -282,17 +282,17 @@ from PIL import Image
 s3_client = boto3.client("s3")
 
 UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
-LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "https://seratonin.tail40ae2c.ts.net")
-LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
+# LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "https://seratonin.tail40ae2c.ts.net")  # local — removed
+# LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")  # local — removed
 MAX_TOKENS = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", 20))
 
-# LM Studio OpenAI-compatible client
-client = OpenAI(
-    base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
-    api_key=LM_STUDIO_API_KEY,
-    timeout=55.0,
-)
+# LM Studio OpenAI-compatible client (removed — was routing to local Tailscale/Seratonin)
+# client = OpenAI(
+#     base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
+#     api_key=LM_STUDIO_API_KEY,
+#     timeout=55.0,
+# )
 
 # Cache model name at cold-start to avoid an extra round-trip on every invocation.
 def _resolve_model() -> str:
@@ -307,7 +307,7 @@ def _resolve_model() -> str:
         logger.warning("_resolve_model failed (using default): %s\n%s", exc, traceback.format_exc())
     return os.environ.get("LM_STUDIO_MODEL", "qwen3.5")
 
-MODEL_NAME: str = _resolve_model()
+# MODEL_NAME: str = _resolve_model()  # removed — would connect to local LM Studio at cold-start
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -333,7 +333,7 @@ LANGUAGE_INSTRUCTIONS = {
 }
 
 
-def handler(event: dict, _context: Any) -> dict:
+def _lm_studio_handler_legacy(event: dict, _context: Any) -> dict:  # renamed — not called
     job_id = event.get("jobId", "unknown")
     s3_key = event.get("s3Key", "")
     lang = event.get("lang", "en")
@@ -462,7 +462,7 @@ def _guess_type(key: str) -> str:
     }.get(ext, "application/octet-stream")
 
 
-def _detect_magic_type(raw_bytes: bytes) -> str:
+def _detect_magic_type(raw_bytes: bytes, s3_key: str = '') -> str:  # compat alias — s3_key ignored
     if len(raw_bytes) < 12:
         return ""
     if raw_bytes.startswith(b"%PDF-"):
@@ -482,7 +482,7 @@ def _detect_magic_type(raw_bytes: bytes) -> str:
     return ""
 
 
-def _image_to_data_url(raw_bytes: bytes, mime_type: str) -> str | None:
+def _image_to_data_url(raw_bytes: bytes, mime_type: str = '') -> str | None:  # compat: mime_type optional
     try:
         img = Image.open(io.BytesIO(raw_bytes))
         if img.mode in ("RGBA", "P"):

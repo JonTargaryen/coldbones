@@ -84,7 +84,7 @@ const apiStack = new ApiStack(app, 'ColdbonesApi', {
   gpuIpParamName: gpuStack.gpuIpParamName,
   gpuPortParamName: gpuStack.gpuPortParamName,
   gpuAsgNameParamName: gpuStack.asgNameParamName,
-  gpuAsgName: gpuStack.asgName,
+  // gpuAsgName intentionally omitted — Lambda reads from SSM at runtime via GPU_ASG_PARAM
   modelName: gpuConfig.model,
 });
 apiStack.addDependency(storageStack);

@@ -51,7 +51,6 @@ export interface HealthResponse {
   status: string;
   model: string;
   provider: string;
-  lm_studio_url?: string;
   model_loaded: boolean;
 }
 

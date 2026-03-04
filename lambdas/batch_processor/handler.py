@@ -315,19 +315,19 @@ dynamodb = boto3.resource("dynamodb")
 sns_client = boto3.client("sns")
 
 UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
-LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "https://seratonin.tail40ae2c.ts.net")
-LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
+# LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "https://seratonin.tail40ae2c.ts.net")  # local — removed
+# LM_STUDIO_API_KEY = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")  # local — removed
 JOBS_TABLE = os.environ["JOBS_TABLE"]
 ANALYZE_QUEUE_URL = os.environ["ANALYZE_QUEUE_URL"]
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 MAX_TOKENS = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", 20))
 
-client = OpenAI(
-    base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
-    api_key=LM_STUDIO_API_KEY,
-    timeout=300.0,
-)
+# client = OpenAI(  # removed — was routing to local Tailscale/Seratonin
+#     base_url=f"{LM_STUDIO_URL.rstrip('/')}/v1",
+#     api_key=LM_STUDIO_API_KEY,
+#     timeout=300.0,
+# )
 
 # Cache model name at cold-start to avoid an extra round-trip on every invocation.
 def _init_model_name() -> str:
@@ -339,7 +339,7 @@ def _init_model_name() -> str:
         pass
     return "qwen3.5"
 
-MODEL_NAME: str = _init_model_name()
+# MODEL_NAME: str = _init_model_name()  # removed — would connect to local LM Studio at cold-start
 
 SYSTEM_PROMPT = """You are a precise visual analyst. Examine the provided image carefully and respond with a JSON object (no markdown fences) matching this exact schema:
 
@@ -362,7 +362,7 @@ LANGUAGE_INSTRUCTIONS = {
 ACCEPTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
-def handler(event: dict, _context: Any) -> dict:
+def _lm_studio_handler_legacy(event: dict, _context: Any) -> dict:  # renamed — not called
     table = dynamodb.Table(JOBS_TABLE)
     records = event.get("Records", [])
 

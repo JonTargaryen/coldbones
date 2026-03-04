@@ -122,9 +122,9 @@ export default function App() {
             ) : health ? (
               <span
                 className="health-err"
-                title={`LM Studio unreachable at ${health.lm_studio_url ?? '—'}`}
+                title="GPU server unreachable"
               >
-                ● LM Studio offline
+                ● Server offline
               </span>
             ) : (
               <span

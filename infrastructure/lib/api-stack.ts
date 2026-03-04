@@ -33,7 +33,7 @@ export interface ApiStackProps extends cdk.StackProps {
   gpuIpParamName: string;         // /coldbones/gpu-ip
   gpuPortParamName: string;       // /coldbones/gpu-port
   gpuAsgNameParamName: string;    // /coldbones/gpu-asg-name
-  gpuAsgName: string;             // for schedule_manager env
+  gpuAsgName?: string;            // for schedule_manager env (optional — falls back to SSM lookup)
 
   // Model
   modelName?: string;             // served model name
@@ -116,7 +116,7 @@ export class ApiStack extends cdk.Stack {
       SNS_TOPIC_ARN: props.notificationTopic.topicArn,
       GPU_IP_PARAM: props.gpuIpParamName,
       GPU_PORT_PARAM: props.gpuPortParamName,
-      GPU_ASG_NAME: props.gpuAsgName,
+      GPU_ASG_NAME: props.gpuAsgName ?? '',  // empty → gpu_client falls back to SSM /coldbones/gpu-asg-name
       GPU_ASG_PARAM: props.gpuAsgNameParamName,
       MODEL_NAME: modelName,
       POWERTOOLS_SERVICE_NAME: 'coldbones',
@@ -155,6 +155,11 @@ export class ApiStack extends cdk.Stack {
                       { stdio: 'inherit' },
                     );
                     execSync(`cp -r "${dirPath}/." "${outputDir}"`);
+                    // Include shared gpu_client module used by orchestrator & batch_processor
+                    const gpuClientSrc = path.join(lambdaRoot, 'gpu_client.py');
+                    if (fs.existsSync(gpuClientSrc)) {
+                      execSync(`cp "${gpuClientSrc}" "${outputDir}/gpu_client.py"`);
+                    }
                     return true;
                   } catch { return false; }
                 },
@@ -366,6 +371,7 @@ export class ApiStack extends cdk.Stack {
             status: 'ok',
             model: modelName,
             provider: 'vLLM on AWS GPU (cloud)',
+            model_loaded: true,
           }),
         },
       }],
