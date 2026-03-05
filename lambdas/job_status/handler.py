@@ -73,6 +73,13 @@ def handler(event: dict, _context: Any) -> dict:
     elif status == "FAILED":
         out["error"] = item.get("error", "Unknown error")
 
+    # Surface streaming partial text for in-flight jobs
+    if status == "PROCESSING":
+        partial = item.get("partial_text")
+        if partial:
+            out["partial_text"] = partial
+            out["partial_len"] = int(item.get("partial_len", 0))
+
     return {
         "statusCode": 200,
         "body": json.dumps(out, default=_json_default),

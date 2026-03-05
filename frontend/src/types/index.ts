@@ -27,6 +27,8 @@ export interface UploadedFile {
   progress: number;
   error?: string;
   result?: AnalysisResult;
+  /** Partial model output streamed during analysis (raw text before parsing) */
+  partialText?: string;
   // Cloud upload fields (set after S3 presigned PUT)
   s3Key?: string;
   uploadJobId?: string;

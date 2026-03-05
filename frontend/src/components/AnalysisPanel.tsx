@@ -13,6 +13,7 @@ interface AnalysisPanelProps {
   error: string | null;
   elapsedMs: number;
   estimateMs?: number | null;
+  partialText?: string;
 }
 
 /** Copy text to clipboard with visual feedback */
@@ -65,7 +66,7 @@ function ScrollBox({ children, className }: { children: React.ReactNode; classNa
   );
 }
 
-export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, elapsedMs, estimateMs }: AnalysisPanelProps) {
+export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, elapsedMs, estimateMs, partialText }: AnalysisPanelProps) {
   const [cotOpen, setCotOpen] = useState(false);
   const [fullResponseOpen, setFullResponseOpen] = useState(false);
   const { t } = useLanguage();
@@ -97,6 +98,20 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
         <div className="analysis-progress-bar" aria-hidden="true">
           <div className="analysis-progress-fill" />
         </div>
+        {partialText && (
+          <div className="streaming-preview">
+            <div className="streaming-header">
+              <span className="streaming-dot" aria-hidden="true" />
+              <span className="streaming-label">Live Model Output</span>
+              <span className="streaming-chars">{partialText.length.toLocaleString()} chars</span>
+            </div>
+            <ScrollBox className="full-response-content">
+              <div className="markdown-body" tabIndex={0}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{partialText}</ReactMarkdown>
+              </div>
+            </ScrollBox>
+          </div>
+        )}
       </div>
     );
   }

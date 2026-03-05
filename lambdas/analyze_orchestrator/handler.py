@@ -65,7 +65,7 @@ from PIL import Image
 sys.path.insert(0, '/var/task')
 from desktop_client import get_openai_client
 from bedrock_client import invoke_bedrock
-from bedrock_ondemand_client import invoke_ondemand
+from bedrock_ondemand_client import invoke_ondemand, invoke_ondemand_streaming
 from logger import get_logger
 
 log = get_logger('analyze_orchestrator')
@@ -226,11 +226,23 @@ def handler(event: dict, _context: Any) -> dict:
     # ── Call inference provider ─────────────────────────────────────────────
     if provider == 'ondemand':
         try:
+            # Stream tokens from Bedrock and periodically update DynamoDB
+            # so the frontend can show live partial text while polling.
+            _last_flush = [time.time()]
+            _flush_interval = 2.0  # seconds between DynamoDB partial writes
+
+            def _on_chunk(delta: str, accumulated: str) -> None:
+                now = time.time()
+                if now - _last_flush[0] >= _flush_interval:
+                    _last_flush[0] = now
+                    _write_partial_text(job_id, accumulated)
+
             with log.timed('inference', provider='ondemand') as ctx:
-                ondemand_resp = invoke_ondemand(
+                ondemand_resp = invoke_ondemand_streaming(
                     image_data_urls=image_data_urls,
                     system_prompt=SYSTEM_PROMPT,
                     analysis_text=analysis_text,
+                    on_chunk=_on_chunk,
                     max_tokens=MAX_TOKENS,
                     temperature=0.6,
                 )
@@ -593,6 +605,27 @@ def _parse_model_response(text: str) -> dict:
         'ocr_text': 'No text detected.',
         'content_classification': 'unknown',
     }
+
+
+def _write_partial_text(job_id: str, text: str) -> None:
+    """Persist the current partial model output to DynamoDB.
+
+    Called every ~2 s during streaming so the polling frontend can show
+    live tokens.  Failures are swallowed — this is best-effort.
+    """
+    if not JOBS_TABLE_NAME or job_id == 'unknown':
+        return
+    try:
+        dynamodb.Table(JOBS_TABLE_NAME).update_item(
+            Key={'jobId': job_id},
+            UpdateExpression='SET partial_text = :pt, partial_len = :pl',
+            ExpressionAttributeValues={
+                ':pt': text,
+                ':pl': len(text),
+            },
+        )
+    except Exception as e:
+        log.warning('partial_text_write_failed', error=str(e))
 
 
 def _error(status: int, message: str, job_id: str = 'unknown') -> dict:

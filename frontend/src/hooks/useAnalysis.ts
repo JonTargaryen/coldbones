@@ -126,12 +126,15 @@ async function _pollForResult(
         if (jobStatus === 'COMPLETED') {
           clearInterval(timer);
           const raw: ApiAnalysisResult = body.result ?? body;
-          update({ status: 'complete', result: mapResult(raw) });
+          update({ status: 'complete', result: mapResult(raw), partialText: undefined });
           resolve();
         } else if (jobStatus === 'FAILED') {
           clearInterval(timer);
-          update({ status: 'error', error: body.error ?? 'Analysis failed on server' });
+          update({ status: 'error', error: body.error ?? 'Analysis failed on server', partialText: undefined });
           resolve();
+        } else if (body.partial_text) {
+          // Surface live streaming tokens from the model
+          update({ partialText: body.partial_text });
         }
         // PROCESSING / QUEUED → keep polling
       } catch {

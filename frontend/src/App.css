@@ -651,6 +651,50 @@ body {
 }
 
 /* ══════════════════════════════════════════════
+   ══ STREAMING PREVIEW (live model output during analysis)
+   ══════════════════════════════════════════════ */
+.streaming-preview {
+  width: 100%;
+  max-width: 800px;
+  margin-top: 20px;
+  text-align: left;
+  animation: section-expand 0.3s ease-out;
+}
+.streaming-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 0.78rem;
+  color: var(--md-on-surface-variant);
+}
+.streaming-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--md-success);
+  box-shadow: 0 0 6px var(--md-success);
+  animation: streaming-pulse 1.5s ease-in-out infinite;
+}
+@keyframes streaming-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+.streaming-label {
+  font-weight: 500;
+  color: var(--md-secondary);
+  letter-spacing: 0.02em;
+}
+.streaming-chars {
+  font-size: 0.7rem;
+  color: var(--md-outline);
+  margin-left: auto;
+}
+.streaming-preview .full-response-content {
+  max-height: 500px;
+  border: 1px solid rgba(138,180,248,0.3);
+}
+
+/* ══════════════════════════════════════════════
    ══ DESCRIPTION SECTION
    ══════════════════════════════════════════════ */
 .description-section .markdown-body { font-size: 0.9rem; line-height: 1.8; }

@@ -288,6 +288,7 @@ export default function App() {
                 error={selectedFile?.error ?? null}
                 elapsedMs={elapsedMs}
                 estimateMs={estimateMs}
+                partialText={selectedFile?.partialText}
               />
             </div>
           </section>

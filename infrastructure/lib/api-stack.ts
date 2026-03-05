@@ -467,7 +467,7 @@ export class ApiStack extends cdk.Stack {
     const canary = new synthetics.Canary(this, 'HealthCanary', {
       canaryName: 'coldbones-health',
       schedule:   synthetics.Schedule.rate(cdk.Duration.minutes(5)),
-      runtime:    synthetics.Runtime.SYNTHETICS_NODEJS_PUPPETEER_7_0,
+      runtime:    synthetics.Runtime.SYNTHETICS_NODEJS_PUPPETEER_13_0,
       test: synthetics.Test.custom({
         code: synthetics.Code.fromInline(`
 const https = require('https');
