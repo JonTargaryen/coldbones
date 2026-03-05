@@ -79,6 +79,7 @@ active_model: str = MODEL_NAME
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """App lifespan: probe LM Studio on startup, yield, then shut down."""
     global lm_client, active_model
     try:
         probe = OpenAI(
@@ -144,6 +145,7 @@ async def local_upload(token: str, filename: str, request: Request):
 
 @app.get("/api/health")
 async def health():
+    """Return LM Studio connection status and active model info."""
     global lm_client, active_model
     model_loaded = False
     current_model = active_model
@@ -291,6 +293,7 @@ async def analyze(request: Request):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _detect_type(file_bytes: bytes, fallback: str) -> str:
+    """Identify file type from magic bytes, with fallback content type."""
     if file_bytes[:5] == b"%PDF-":
         return "application/pdf"
     if file_bytes[:8] == b"\x89PNG\r\n\x1a\n":
@@ -334,6 +337,7 @@ def _compress_image(pil_img: Image.Image) -> str | None:
 
 
 def _image_to_data_url(raw_bytes: bytes) -> str | None:
+    """Convert raw image bytes to a compressed JPEG base64 data URL."""
     try:
         img = Image.open(io.BytesIO(raw_bytes))
         return _compress_image(img)
@@ -343,6 +347,7 @@ def _image_to_data_url(raw_bytes: bytes) -> str | None:
 
 
 def _pdf_to_data_urls(pdf_bytes: bytes) -> list[str]:
+    """Render PDF pages as compressed JPEG base64 data URLs."""
     try:
         import pdf2image
         pages = pdf2image.convert_from_bytes(pdf_bytes, dpi=150)
@@ -405,6 +410,7 @@ def _video_to_data_urls(video_bytes: bytes) -> list[str]:
 
 
 def _parse(raw_text: str) -> dict:
+    """Parse a JSON response from the model, stripping markdown fences if present."""
     text = raw_text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*\n?", "", text)

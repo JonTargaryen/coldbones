@@ -24,6 +24,7 @@ const PROVIDERS: { value: InferenceProvider; label: string; title: string }[] = 
   },
 ];
 
+/** Button group for selecting the inference provider (Auto, Local, or Cloud). */
 export function ProviderPicker({ disabled = false, health }: ProviderPickerProps) {
   const { provider, setProvider } = useProvider();
 

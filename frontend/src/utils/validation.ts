@@ -28,24 +28,29 @@ export interface ValidationError {
   message: string;
 }
 
+/** Checks whether a file's MIME type is in the accepted image, video, or PDF list. */
 export function isAcceptedType(file: File): boolean {
   return ACCEPTED_IMAGE_TYPES.includes(file.type)
     || ACCEPTED_VIDEO_TYPES.includes(file.type)
     || file.type === ACCEPTED_PDF_TYPE;
 }
 
+/** Returns true if the file is an accepted image type. */
 export function isImage(file: File): boolean {
   return ACCEPTED_IMAGE_TYPES.includes(file.type);
 }
 
+/** Returns true if the file is an accepted video type. */
 export function isVideo(file: File): boolean {
   return ACCEPTED_VIDEO_TYPES.includes(file.type);
 }
 
+/** Returns true if the file is a PDF. */
 export function isPdf(file: File): boolean {
   return file.type === ACCEPTED_PDF_TYPE;
 }
 
+/** Validates a single file's type and size, returning an error string or null. */
 export function validateFile(file: File): string | null {
   if (!isAcceptedType(file)) {
     return `Unsupported file type "${file.type || 'unknown'}". Accepted: JPEG, PNG, WebP, GIF, BMP, TIFF, PDF, MP4, WebM, MOV.`;
@@ -85,6 +90,7 @@ export async function validatePdfPageCount(file: File): Promise<string | null> {
   }
 }
 
+/** Validates an array of files against batch-size limits and per-file rules. */
 export function validateBatch(files: File[], mode: 'fast' | 'slow'): ValidationError[] {
   const maxBatch = mode === 'fast' ? MAX_BATCH_SIZE_FAST : MAX_BATCH_SIZE_SLOW;
   const errors: ValidationError[] = [];
@@ -106,6 +112,7 @@ export function validateBatch(files: File[], mode: 'fast' | 'slow'): ValidationE
   return errors;
 }
 
+/** Returns an error string if the file count exceeds the batch limit for the given mode. */
 export function validateBatchSize(count: number, mode: 'fast' | 'slow'): string | null {
   const maxBatch = mode === 'fast' ? MAX_BATCH_SIZE_FAST : MAX_BATCH_SIZE_SLOW;
   if (count > maxBatch) {

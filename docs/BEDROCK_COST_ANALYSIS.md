@@ -408,7 +408,74 @@ A typical ColdBones image analysis request:
 
 ---
 
-## 6. Architecture: Dual-Provider with Fallback
+## 6. Bedrock On-Demand (Converse API) vs EC2 GPU vs Physical Hardware
+
+This section compares the three deployment strategies most relevant to ColdBones: the **current production setup** (Bedrock On-Demand + home GPU), a **cloud GPU** (EC2), and **dedicated physical hardware**.
+
+### Per-Request Cost Comparison
+
+**Model:** Qwen3 VL 235B (Bedrock) / Qwen3.5 35B A3B (Local)
+
+| | Bedrock On-Demand | EC2 g6.2xlarge (L4) | Physical RTX 5090 |
+|---|---|---|---|
+| **Input tokens/image** | ~1,200 | ~1,200 | ~1,200 |
+| **Output tokens/image** | ~800 | ~800 | ~800 |
+| **Cost per request** | ~$0.0015 | ~$0.0002 (amortized) | ~$0.00 |
+| **Monthly (100 req)** | $0.15 | $701† | $0.00‡ |
+| **Monthly (1K req)** | $1.54 | $701† | $0.00‡ |
+| **Monthly (10K req)** | $15.42 | $701† | $0.00‡ |
+| **Monthly (100K req)** | $154.20 | $701† | $0.00‡ |
+
+*†EC2 g6.2xlarge on-demand: $0.9716/hr × 24 × 30 = $701/month (must run 24/7 for always-on inference)*
+*‡RTX 5090 power cost ~$5-15/month at US electricity rates, amortized hardware ~$55/month over 2 years*
+
+### Break-Even Analysis
+
+| Comparison | Break-Even Point |
+|---|---|
+| **Bedrock vs EC2 (always-on)** | ~455K requests/month |
+| **Bedrock vs EC2 (Spot, ~70% off)** | ~136K requests/month |
+| **Bedrock vs physical RTX 5090** | Never — RTX 5090 wins at any volume (but requires home server) |
+
+### Total Cost of Ownership (24-month)
+
+| | Bedrock On-Demand | EC2 g6.2xlarge | RTX 5090 (physical) |
+|---|---|---|---|
+| **Upfront** | $0 | $0 | ~$1,999 (GPU) + ~$500 (system) |
+| **Monthly infra** | $0 (scale-to-zero) | $701 (on-demand) / $210 (spot) | ~$20 (electricity + internet) |
+| **Monthly @ 1K req** | $1.54 | $701 | $20 |
+| **24-month total @ 1K req** | $37 | $16,824 | $2,979 |
+| **24-month total @ 10K req** | $370 | $16,824 | $2,979 |
+| **24-month total @ 100K req** | $3,701 | $16,824 | $2,979 |
+
+### Qualitative Comparison
+
+| Factor | Bedrock On-Demand | EC2 GPU | Physical RTX 5090 |
+|---|---|---|---|
+| **Scale to zero** | ✅ Yes (pay nothing idle) | ❌ No (paying 24/7) | ✅ Yes (just idle power) |
+| **Cold start** | ✅ None (<1s) | ❌ 2-5 min (instance start) | ⚠️ None if LM Studio running |
+| **Model size** | ✅ 235B (full MoE) | ⚠️ 7-14B (L4 24GB VRAM) | ⚠️ 35B (32GB VRAM, quantized) |
+| **Ops burden** | ✅ Zero | ❌ High (patching, monitoring) | ⚠️ Low (LM Studio auto-update) |
+| **Reliability** | ✅ AWS SLA 99.9% | ⚠️ Self-managed HA | ❌ Home network (Tailscale helps) |
+| **Latency** | ✅ 5-15s (large model) | ✅ 2-5s | ✅ 1-2s (local network) |
+| **Data privacy** | ✅ AWS region | ✅ Your VPC | ✅ Your machine |
+| **Scalability** | ✅ Unlimited | ⚠️ Manual scaling | ❌ Single GPU |
+
+### Why ColdBones Uses Both
+
+The current architecture uses a **hybrid approach** that gets the best of both worlds:
+
+1. **RTX 5090 (primary)** — Zero marginal cost, fastest latency, best cost at any volume
+2. **Bedrock On-Demand (fallback)** — Always available when home GPU is offline/busy, zero cost when unused, larger model (235B vs 35B)
+
+This hybrid costs **~$20/month** (home electricity) + **$0.0015 per fallback request**, compared to:
+- **Pure cloud:** $701+/month for a dedicated EC2 instance
+- **Pure Bedrock:** $0.0015/request with no volume discount
+- **Pure physical:** $20/month but no availability guarantee
+
+---
+
+## 7. Architecture: Dual-Provider with Fallback
 
 ```
 Frontend → API Gateway → analyze_router Lambda
@@ -438,7 +505,7 @@ Frontend → API Gateway → analyze_router Lambda
 
 ---
 
-## 7. S3 Model Bucket Setup
+## 8. S3 Model Bucket Setup
 
 The model weights (~15 GB for 7B FP16) are stored in S3 and referenced by
 the Bedrock import job.
@@ -457,7 +524,7 @@ s3://coldbones-models-{account-id}/
 
 ---
 
-## 8. Setup Steps
+## 9. Setup Steps
 
 1. Run `scripts/setup-bedrock-model.sh` to download model and upload to S3
 2. The script creates the Bedrock import job automatically

@@ -33,6 +33,7 @@ function mapResult(raw: ApiAnalysisResult): AnalysisResult {
   };
 }
 
+/** Hook that triggers fast-mode analysis and polls for results. */
 export function useAnalysis(
   setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>,
 ) {

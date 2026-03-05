@@ -21,6 +21,7 @@ import type { HealthResponse } from './types';
 
 import { API_BASE_URL as API } from './config';
 
+/** Root application component — manages health checks, file uploads, and analysis orchestration. */
 export default function App() {
   const { mode } = useMode();
   const { lang, t } = useLanguage();

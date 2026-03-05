@@ -6,6 +6,7 @@ interface JobTrackerProps {
   jobs: SlowJob[];
 }
 
+/** Displays the slow-mode job queue with per-job status, progress, and expandable results. */
 export function JobTracker({ jobs }: JobTrackerProps) {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 

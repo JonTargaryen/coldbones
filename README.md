@@ -12,8 +12,10 @@
 4. [Deploy the Frontend](#deploy-the-frontend)
 5. [Local Development](#local-development)
 6. [Desktop Worker](#desktop-worker)
-7. [Project Structure](#project-structure)
-8. [Environment Variables](#environment-variables)
+7. [Testing](#testing)
+8. [Project Structure](#project-structure)
+9. [Documentation](#documentation)
+10. [Environment Variables](#environment-variables)
 
 ---
 
@@ -154,6 +156,47 @@ The worker long-polls SQS, downloads each uploaded file from S3, converts images
 
 ---
 
+## Testing
+
+### Backend (pytest)
+
+```bash
+cd backend
+pip install -r requirements.txt
+pytest --cov=. --cov-report=term-missing
+```
+
+**228 tests, 95.19% coverage.** Uses moto for AWS mocks (S3, DynamoDB, SQS, SSM).
+
+### Frontend (Vitest)
+
+```bash
+cd frontend
+npm install
+npm test
+```
+
+**352 tests, all passing.** Coverage thresholds enforced:
+
+| Metric | Threshold | Actual |
+|---|---|---|
+| Statements | 97% | 97.65% |
+| Branches | 90% | 91.10% |
+| Functions | 97% | 97.47% |
+| Lines | 97% | 98.80% |
+
+### Infrastructure (Jest)
+
+```bash
+cd infrastructure
+npm install
+npm test
+```
+
+CDK snapshot tests for all three stacks.
+
+---
+
 ## Project Structure
 
 ```
@@ -183,6 +226,24 @@ coldbones/
     ├── deploy-frontend.sh S3 sync + CloudFront invalidation
     └── validate.sh        End-to-end API smoke test
 ```
+
+---
+
+## Documentation
+
+Comprehensive documentation is in the `docs/` directory:
+
+| Document | Description |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture diagrams, component hierarchy, 7-layer overview |
+| [HAPPY_PATHS.md](docs/HAPPY_PATHS.md) | Complete data flow walkthroughs for all user workflows |
+| [DEVELOPMENT_HISTORY.md](docs/DEVELOPMENT_HISTORY.md) | Git commit timeline and development narrative |
+| [FRONTEND.md](docs/FRONTEND.md) | React component tree, hooks, contexts, state management |
+| [BACKEND.md](docs/BACKEND.md) | Lambda functions, inference clients, FastAPI dev server, worker |
+| [DATABASE.md](docs/DATABASE.md) | DynamoDB schema, status lifecycle, access patterns |
+| [CLOUD_INFRASTRUCTURE.md](docs/CLOUD_INFRASTRUCTURE.md) | CDK stacks, S3, CloudFront, WAF, SQS, Route53, cost estimates |
+| [UI_UX.md](docs/UI_UX.md) | Material Design 3 theme, accessibility, animations, error handling |
+| [BEDROCK_COST_ANALYSIS.md](docs/BEDROCK_COST_ANALYSIS.md) | Bedrock pricing deep dive, On-Demand vs EC2 vs physical hardware |
 
 ---
 

@@ -9,6 +9,7 @@ interface LanguageContextValue {
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
+/** Provides the current UI language and translation strings to the component tree. */
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Language>(() => {
     const saved = localStorage.getItem('coldbones-lang');
@@ -39,6 +40,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Returns the current language, setter, and translation record from LanguageContext. */
 export function useLanguage() {
   const ctx = useContext(LanguageContext);
   if (!ctx) throw new Error('useLanguage must be used within LanguageProvider');

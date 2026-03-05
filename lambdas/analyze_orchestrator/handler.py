@@ -45,6 +45,7 @@ Event shape (sent by analyze_router):
     "lang": "en", "filename": "photo.jpg", "mode": "fast",
     "provider": "ondemand|desktop|bedrock" }
 """
+from __future__ import annotations
 
 import base64
 import io
@@ -155,6 +156,7 @@ LANGUAGE_INSTRUCTIONS = {
 
 
 def handler(event: dict, _context: Any) -> dict:
+    """Lambda entry point: download file from S3, run inference, and persist results."""
     job_id   = event.get('jobId', 'unknown')
     s3_key   = event.get('s3Key', '')
     lang     = event.get('lang', 'en')
@@ -706,6 +708,7 @@ def _write_partial_text(job_id: str, text: str) -> None:
 
 
 def _error(status: int, message: str, job_id: str = 'unknown') -> dict:
+    """Build an error response and mark the job as FAILED in DynamoDB."""
     log.error('orchestrator_error', status=status, message=message)
     if JOBS_TABLE_NAME and job_id != 'unknown':
         try:

@@ -8,6 +8,7 @@ interface ProviderContextType {
 
 const ProviderContext = createContext<ProviderContextType | undefined>(undefined);
 
+/** Provides the selected inference provider with localStorage persistence. */
 export function ProviderProvider({ children }: { children: ReactNode }) {
   const [provider, setProviderState] = useState<InferenceProvider>(() => {
     const saved = localStorage.getItem('coldbones-provider');
@@ -30,6 +31,7 @@ export function ProviderProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Returns the current inference provider and its setter from ProviderContext. */
 export function useProvider() {
   const context = useContext(ProviderContext);
   if (!context) {

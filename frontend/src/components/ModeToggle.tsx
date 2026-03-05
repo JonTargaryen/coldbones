@@ -5,6 +5,7 @@ interface ModeToggleProps {
   disabled?: boolean;
 }
 
+/** Toggle button group for switching between Fast and Slow processing modes. */
 export function ModeToggle({ disabled = false }: ModeToggleProps) {
   const { mode, setMode } = useMode();
 

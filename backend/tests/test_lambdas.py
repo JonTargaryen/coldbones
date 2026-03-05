@@ -558,3 +558,226 @@ class TestBatchProcessor:
         assert not hasattr(mod, "s3_client"), "Tombstone should not have s3_client"
         assert not hasattr(mod, "LM_STUDIO_URL"), "Tombstone should not have LM_STUDIO_URL"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ANALYZE ROUTER — additional branch coverage
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_ROUTER_ENV = {
+    "JOBS_TABLE": "test-jobs",
+    "ANALYZE_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123/q",
+    "ORCHESTRATOR_FUNCTION_ARN": "arn:aws:lambda:us-east-1:123:function:orch",
+}
+
+
+def _reload_router():
+    """Reload the router module with the current env."""
+    import importlib
+    _add_lambda("analyze_router")
+    import lambdas.analyze_router.handler as mod
+    importlib.reload(mod)
+    return mod
+
+
+class TestAnalyzeRouterBranches:
+    """Cover every provider branch + error path in the router."""
+
+    def _setup_mod(self):
+        mod = _reload_router()
+        mock_lambda = MagicMock()
+        mock_lambda.invoke.return_value = {"StatusCode": 202}
+        mod.lambda_client = mock_lambda
+        mock_table = MagicMock()
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value = mock_table
+        mod.dynamodb = mock_ddb
+        mock_sqs = MagicMock()
+        mod.sqs_client = mock_sqs
+        return mod
+
+    def test_cloud_cmi_provider(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "provider": "cloud-cmi"})}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 202
+        # Should set provider to 'bedrock' internally
+        call_payload = json.loads(mod.lambda_client.invoke.call_args.kwargs["Payload"].decode())
+        assert call_payload["provider"] == "bedrock"
+
+    def test_cloud_provider(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "provider": "cloud"})}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 202
+        call_payload = json.loads(mod.lambda_client.invoke.call_args.kwargs["Payload"].decode())
+        assert call_payload["provider"] == "ondemand"
+
+    def test_local_provider_desktop_alive(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            with patch.object(mod, "is_desktop_alive", return_value=True):
+                event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "provider": "local"})}
+                result = mod.handler(event, CTX)
+        assert result["statusCode"] == 202
+        call_payload = json.loads(mod.lambda_client.invoke.call_args.kwargs["Payload"].decode())
+        assert call_payload["provider"] == "desktop"
+
+    def test_local_provider_desktop_offline(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            with patch.object(mod, "is_desktop_alive", return_value=False):
+                event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "provider": "local"})}
+                result = mod.handler(event, CTX)
+        assert result["statusCode"] == 202
+        body = json.loads(result["body"])
+        assert body["status"] == "queued"
+        assert "offline" in body["message"].lower() or "Desktop" in body["message"]
+
+    def test_invoke_async_missing_arn(self):
+        env = {**_ROUTER_ENV, "ORCHESTRATOR_FUNCTION_ARN": ""}
+        with patch.dict("os.environ", env):
+            mod = self._setup_mod()
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg"})}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 500
+
+    def test_invoke_async_lambda_client_error(self):
+        from botocore.exceptions import ClientError
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            mod.lambda_client.invoke.side_effect = ClientError(
+                {"Error": {"Code": "ServiceException", "Message": "boom"}}, "Invoke"
+            )
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg"})}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 502
+
+    def test_invoke_async_ddb_write_failure_non_fatal(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            mock_ddb = MagicMock()
+            mock_ddb.Table.return_value.put_item.side_effect = Exception("DDB boom")
+            mod.dynamodb = mock_ddb
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg"})}
+            result = mod.handler(event, CTX)
+        # Should still succeed (DDB failure is non-fatal)
+        assert result["statusCode"] == 202
+
+    def test_enqueue_missing_queue_url(self):
+        env = {**_ROUTER_ENV, "ANALYZE_QUEUE_URL": ""}
+        with patch.dict("os.environ", env):
+            mod = self._setup_mod()
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "mode": "offline"})}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 500
+
+    def test_enqueue_sqs_client_error(self):
+        from botocore.exceptions import ClientError
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            mod.sqs_client.send_message.side_effect = ClientError(
+                {"Error": {"Code": "QueueDoesNotExist", "Message": "gone"}}, "SendMessage"
+            )
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "mode": "offline"})}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 502
+
+    def test_enqueue_ddb_write_failure_non_fatal(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            mock_ddb = MagicMock()
+            mock_ddb.Table.return_value.put_item.side_effect = Exception("DDB boom")
+            mod.dynamodb = mock_ddb
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "mode": "offline"})}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 202
+
+    def test_invalid_json_body(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            event = {"body": "not-json{{{"}
+            result = mod.handler(event, CTX)
+        assert result["statusCode"] == 400
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JOB STATUS — additional branch coverage
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestJobStatusBranches:
+    """Cover DDB read failure, partial_text in PROCESSING, and _json_default."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        _add_lambda("job_status")
+
+    def test_ddb_read_client_error(self):
+        from botocore.exceptions import ClientError
+        with patch.dict("os.environ", {"JOBS_TABLE": "test-jobs"}):
+            import importlib
+            import lambdas.job_status.handler as mod
+            importlib.reload(mod)
+            mock_table = MagicMock()
+            mock_table.get_item.side_effect = ClientError(
+                {"Error": {"Code": "InternalServerError", "Message": "DDB down"}}, "GetItem"
+            )
+            mock_ddb = MagicMock()
+            mock_ddb.Table.return_value = mock_table
+            mod.dynamodb = mock_ddb
+            result = mod.handler({"pathParameters": {"jobId": "j1"}}, CTX)
+        assert result["statusCode"] == 502
+
+    @mock_aws
+    def test_processing_with_partial_text(self):
+        ddb = boto3.resource("dynamodb", region_name="us-east-1")
+        table = ddb.create_table(
+            TableName="test-jobs",
+            KeySchema=[{"AttributeName": "jobId", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "jobId", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        table.put_item(Item={
+            "jobId": "j-partial", "status": "PROCESSING",
+            "createdAt": "2026-01-01",
+            "partial_text": "Analyzing the image... I see",
+            "partial_len": 29,
+        })
+        with patch.dict("os.environ", {"JOBS_TABLE": "test-jobs"}):
+            import importlib
+            import lambdas.job_status.handler as mod
+            importlib.reload(mod)
+            result = mod.handler({"pathParameters": {"jobId": "j-partial"}}, CTX)
+        body = json.loads(result["body"])
+        assert body["status"] == "PROCESSING"
+        assert body["partial_text"] == "Analyzing the image... I see"
+        assert body["partial_len"] == 29
+
+    def test_json_default_decimal_int(self):
+        from decimal import Decimal
+        with patch.dict("os.environ", {"JOBS_TABLE": "test-jobs"}):
+            import importlib
+            import lambdas.job_status.handler as mod
+            importlib.reload(mod)
+        assert mod._json_default(Decimal("42")) == 42
+        assert isinstance(mod._json_default(Decimal("42")), int)
+
+    def test_json_default_decimal_float(self):
+        from decimal import Decimal
+        with patch.dict("os.environ", {"JOBS_TABLE": "test-jobs"}):
+            import importlib
+            import lambdas.job_status.handler as mod
+            importlib.reload(mod)
+        assert mod._json_default(Decimal("3.14")) == 3.14
+        assert isinstance(mod._json_default(Decimal("3.14")), float)
+
+    def test_json_default_other_types(self):
+        with patch.dict("os.environ", {"JOBS_TABLE": "test-jobs"}):
+            import importlib
+            import lambdas.job_status.handler as mod
+            importlib.reload(mod)
+        # Non-Decimal types should be stringified
+        assert mod._json_default(set()) == "set()"
+

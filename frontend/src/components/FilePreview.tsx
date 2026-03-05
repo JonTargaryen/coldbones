@@ -77,6 +77,7 @@ interface FilePreviewProps {
   onReorder?: (fromIndex: number, toIndex: number) => void;
 }
 
+/** Displays a preview of the selected file with zoom, PDF pagination, and a draggable thumbnail strip. */
 export function FilePreview({ file, files, onSelect, onRemove, onReorder }: FilePreviewProps) {
   const [zoom, setZoom] = useState(1);
   const [pdfPage, setPdfPage] = useState(1);

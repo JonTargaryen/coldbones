@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def handler(event: dict, context) -> dict:
+    """Tombstone handler: log a warning and leave SQS messages for the desktop worker."""
     logger.warning(
         'batch_processor invoked but is a tombstone — %d record(s) dropped back '
         'to queue for the desktop worker.',

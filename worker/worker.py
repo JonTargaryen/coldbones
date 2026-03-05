@@ -97,6 +97,7 @@ _lm_client: OpenAI | None = None
 
 
 def get_lm_client() -> OpenAI:
+    """Return a lazily-initialized OpenAI client pointing at local LM Studio."""
     global _lm_client
     if _lm_client is None:
         _lm_client = OpenAI(
@@ -125,6 +126,7 @@ _running = True
 
 
 def _handle_signal(sig, frame):
+    """Handle SIGTERM/SIGINT to gracefully drain and shut down the worker."""
     global _running
     logger.info('Signal %s received — draining and shutting down…', sig)
     _running = False
@@ -135,6 +137,7 @@ signal.signal(signal.SIGINT, _handle_signal)
 
 
 def run():
+    """Main loop: wait for LM Studio, then long-poll SQS for jobs."""
     logger.info('Coldbones worker starting. Queue: %s', QUEUE_URL)
 
     # Wait for LM Studio before entering the poll loop
@@ -156,6 +159,7 @@ def run():
 
 
 def _poll_once():
+    """Receive one SQS message and process it, or return if none available."""
     resp = sqs.receive_message(
         QueueUrl=QUEUE_URL,
         MaxNumberOfMessages=MAX_MESSAGES,
@@ -227,6 +231,7 @@ def _poll_once():
 # ── Core processing ───────────────────────────────────────────────────────────
 
 def _process(s3_key: str, lang: str, job_id: str, filename: str) -> dict:
+    """Download file from S3, run local LM Studio inference, and return results."""
     # 1. Download from S3
     obj        = s3.get_object(Bucket=UPLOAD_BUCKET, Key=s3_key)
     file_bytes = obj['Body'].read()
@@ -307,6 +312,7 @@ def _process(s3_key: str, lang: str, job_id: str, filename: str) -> dict:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _detect_type(raw: bytes, s3_key: str) -> str:
+    """Identify file type from magic bytes, with s3_key extension as fallback."""
     if raw.startswith(b'%PDF-'):                  return 'application/pdf'
     if raw.startswith(b'\xFF\xD8\xFF'):           return 'image/jpeg'
     if raw.startswith(b'\x89PNG\r\n\x1a\n'):      return 'image/png'
@@ -322,6 +328,7 @@ def _detect_type(raw: bytes, s3_key: str) -> str:
 
 
 def _image_to_data_url(raw_bytes: bytes) -> str | None:
+    """Convert raw image bytes to a PNG base64 data URL."""
     try:
         img = Image.open(io.BytesIO(raw_bytes))
         if img.mode in ('RGBA', 'P'):
@@ -335,6 +342,7 @@ def _image_to_data_url(raw_bytes: bytes) -> str | None:
 
 
 def _pdf_to_data_urls(pdf_bytes: bytes) -> list[str]:
+    """Render PDF pages as PNG base64 data URLs using pypdfium2."""
     try:
         import pypdfium2 as pdfium
         pdf = pdfium.PdfDocument(pdf_bytes)
@@ -353,6 +361,7 @@ def _pdf_to_data_urls(pdf_bytes: bytes) -> list[str]:
 
 
 def _parse(text: str) -> dict:
+    """Parse a JSON response from the model, stripping markdown fences if present."""
     text = text.strip()
     if text.startswith('```'):
         text = re.sub(r'^```(?:json)?\s*\n?', '', text)
@@ -367,6 +376,7 @@ def _parse(text: str) -> dict:
 
 
 def _update_job(job_id: str, fields: dict) -> None:
+    """Update a DynamoDB job record with the given fields."""
     table       = dynamodb.Table(JOBS_TABLE)
     expr_parts  = []
     attr_names  = {}
@@ -388,6 +398,7 @@ def _update_job(job_id: str, fields: dict) -> None:
 
 
 def _now() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
 
 

@@ -64,6 +64,7 @@ _HEADERS = {
 
 
 def handler(event: dict, _context: Any) -> dict:
+    """Lambda entry point: route analysis requests to the appropriate provider."""
     raw_body = event.get('body') or '{}'
     try:
         body = json.loads(raw_body)
@@ -182,6 +183,7 @@ def _invoke_async(payload: dict, job_id: str) -> dict:
 
 
 def _enqueue(payload: dict, fallback: bool = False) -> dict:
+    """Send the job payload to the SQS offline queue and return HTTP 202."""
     if not ANALYZE_QUEUE_URL:
         return _error(500, 'ANALYZE_QUEUE_URL not configured')
 
@@ -228,6 +230,7 @@ def _enqueue(payload: dict, fallback: bool = False) -> dict:
 
 
 def _error(status: int, msg: str) -> dict:
+    """Build a JSON error response with the given HTTP status."""
     return {
         'statusCode': status,
         'headers': _HEADERS,

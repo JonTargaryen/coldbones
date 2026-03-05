@@ -63,6 +63,7 @@ ALLOWED_CONTENT_TYPES = {
 
 
 def handler(event: dict, _context: Any) -> dict:
+    """Lambda entry point: generate a presigned S3 PUT URL for file upload."""
     raw_body = event.get("body") or "{}"
     try:
         body = json.loads(raw_body)
@@ -137,6 +138,7 @@ def _safe_filename(filename: str) -> str:
 
 
 def _error(status: int, msg: str) -> dict:
+    """Build a JSON error response with the given HTTP status."""
     return {
         "statusCode": status,
         "body": json.dumps({"detail": msg}),

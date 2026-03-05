@@ -8,6 +8,7 @@ interface UploadZoneProps {
   disabled?: boolean;
 }
 
+/** Drag-and-drop / click-to-browse upload zone with clipboard paste support. */
 export function UploadZone({ onFilesAdded, disabled }: UploadZoneProps) {
   const { t } = useLanguage();
 

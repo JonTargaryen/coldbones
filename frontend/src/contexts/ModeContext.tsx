@@ -8,6 +8,7 @@ interface ModeContextType {
 
 const ModeContext = createContext<ModeContextType | undefined>(undefined);
 
+/** Provides the current processing mode (fast/slow) with localStorage persistence. */
 export function ModeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ProcessingMode>(() => {
     const saved = localStorage.getItem('coldbones-mode');
@@ -30,6 +31,7 @@ export function ModeProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Returns the current processing mode and its setter from ModeContext. */
 export function useMode() {
   const context = useContext(ModeContext);
   if (!context) {

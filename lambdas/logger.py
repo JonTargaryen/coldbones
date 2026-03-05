@@ -39,6 +39,7 @@ class StructuredLogger:
     """Structured JSON logger with correlation ID and timing support."""
 
     def __init__(self, name: str, level: int = logging.INFO) -> None:
+        """Initialize a structured logger with the given name and log level."""
         self._name = name
         self._service = os.environ.get('POWERTOOLS_SERVICE_NAME', 'coldbones')
         self._job_id: str = 'unknown'
@@ -89,15 +90,19 @@ class StructuredLogger:
             self._logger.info(line)
 
     def info(self, event: str, **kwargs: Any) -> None:
+        """Log an INFO-level structured event."""
         self._emit('INFO', event, **kwargs)
 
     def warning(self, event: str, **kwargs: Any) -> None:
+        """Log a WARNING-level structured event."""
         self._emit('WARNING', event, **kwargs)
 
     def error(self, event: str, **kwargs: Any) -> None:
+        """Log an ERROR-level structured event."""
         self._emit('ERROR', event, **kwargs)
 
     def debug(self, event: str, **kwargs: Any) -> None:
+        """Log a DEBUG-level structured event."""
         self._emit('DEBUG', event, **kwargs)
 
     def exception(self, event: str, exc: Exception | None = None, **kwargs: Any) -> None:

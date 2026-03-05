@@ -43,6 +43,7 @@ JOBS_TABLE = os.environ["JOBS_TABLE"]
 
 
 def handler(event: dict, _context: Any) -> dict:
+    """Lambda entry point: return the current status of a job from DynamoDB."""
     path_params = event.get("pathParameters") or {}
     job_id = path_params.get("jobId", "").strip()
 
@@ -106,6 +107,7 @@ def _json_default(obj: Any) -> Any:
 
 
 def _error(status: int, msg: str) -> dict:
+    """Build a JSON error response with the given HTTP status."""
     return {
         "statusCode": status,
         "body": json.dumps({"detail": msg}),

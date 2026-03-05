@@ -66,6 +66,7 @@ function ScrollBox({ children, className }: { children: React.ReactNode; classNa
   );
 }
 
+/** Renders analysis results, loading/streaming state, and error messages for a file. */
 export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, elapsedMs, estimateMs, partialText }: AnalysisPanelProps) {
   const [cotOpen, setCotOpen] = useState(false);
   const [fullResponseOpen, setFullResponseOpen] = useState(false);

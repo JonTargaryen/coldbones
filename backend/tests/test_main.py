@@ -517,16 +517,23 @@ class TestImageToDataUrl:
 class TestPdfToDataUrls:
     def test_converts_pdf_pages(self):
         fake_page = Image.new("RGB", (4, 4), "white")
-        with patch("pdf2image.convert_from_bytes", return_value=[fake_page]):
+        import types
+        fake_pdf2image = types.ModuleType("pdf2image")
+        fake_pdf2image.convert_from_bytes = lambda *a, **k: [fake_page]
+        with patch.dict("sys.modules", {"pdf2image": fake_pdf2image}):
             result = _pdf_to_data_urls(b"%PDF-1.4")
         assert len(result) == 1
         assert result[0].startswith("data:image/jpeg;base64,")
 
     def test_limits_to_max_pages(self):
+        """Verify the MAX_PDF_PAGES slicing logic works."""
         fake_pages = [Image.new("RGB", (4, 4)) for _ in range(30)]
+        import types
+        fake_pdf2image = types.ModuleType("pdf2image")
+        fake_pdf2image.convert_from_bytes = lambda *a, **k: fake_pages
         original_max = app_module.MAX_PDF_PAGES
         app_module.MAX_PDF_PAGES = 3
-        with patch("pdf2image.convert_from_bytes", return_value=fake_pages):
+        with patch.dict("sys.modules", {"pdf2image": fake_pdf2image}):
             result = _pdf_to_data_urls(b"%PDF-1.4")
         app_module.MAX_PDF_PAGES = original_max
         assert len(result) == 3
@@ -537,6 +544,180 @@ class TestPdfToDataUrls:
                 _pdf_to_data_urls(b"%PDF-1.4")
 
     def test_conversion_error_raises_runtime_error(self):
-        with patch("pdf2image.convert_from_bytes", side_effect=Exception("poppler missing")):
+        import types
+        fake_pdf2image = types.ModuleType("pdf2image")
+        fake_pdf2image.convert_from_bytes = MagicMock(side_effect=Exception("poppler missing"))
+        with patch.dict("sys.modules", {"pdf2image": fake_pdf2image}):
             with pytest.raises(RuntimeError, match="PDF conversion failed"):
                 _pdf_to_data_urls(b"%PDF-1.4")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /api/presign + /api/localupload — local dev upload flow
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPresignAndLocalUpload:
+    def test_presign_returns_upload_url_and_s3_key(self):
+        resp = client.post("/api/presign", json={"filename": "photo.jpg"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "uploadUrl" in data
+        assert "s3Key" in data
+        assert "jobId" in data
+        assert data["s3Key"].startswith("local/")
+
+    def test_presign_sanitises_slashes(self):
+        resp = client.post("/api/presign", json={"filename": "../../etc/passwd"})
+        assert resp.status_code == 200
+        assert "/" not in resp.json()["s3Key"].split("/", 2)[-1].replace("_", "")  # slashes replaced
+
+    def test_local_upload_stores_bytes(self):
+        presign = client.post("/api/presign", json={"filename": "test.png"}).json()
+        upload_url = presign["uploadUrl"]
+        png = _png_bytes()
+        resp = client.put(upload_url, content=png)
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /api/analyze — JSON body with s3Key (AWS-like flow)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAnalyzeJsonBody:
+    def setup_method(self):
+        app_module.lm_client = _lm_client_mock(_good_json())
+
+    def test_full_presign_upload_analyze_flow(self):
+        """presign → upload → analyze via JSON body."""
+        presign = client.post("/api/presign", json={"filename": "test.png"}).json()
+        s3_key = presign["s3Key"]
+        client.put(presign["uploadUrl"], content=_png_bytes())
+        resp = client.post(
+            "/api/analyze",
+            json={"s3Key": s3_key, "lang": "en", "mode": "fast"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["summary"] == "A test image."
+
+    def test_missing_s3key_returns_404(self):
+        resp = client.post(
+            "/api/analyze",
+            json={"s3Key": "nonexistent/key.png", "lang": "en"},
+        )
+        assert resp.status_code == 404
+
+    def test_pdf_suffix_detected(self):
+        """JSON body with .pdf s3Key is detected as PDF."""
+        presign = client.post("/api/presign", json={"filename": "doc.pdf"}).json()
+        s3_key = presign["s3Key"]
+        client.put(presign["uploadUrl"], content=b"%PDF-1.4 fake")
+        with patch("main._pdf_to_data_urls", return_value=["data:image/jpeg;base64,abc"]):
+            resp = client.post(
+                "/api/analyze",
+                json={"s3Key": s3_key, "lang": "en"},
+            )
+        assert resp.status_code == 200
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _detect_type — video format detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDetectTypeVideo:
+    def test_detects_mp4(self):
+        raw = b"\x00\x00\x00\x18ftyp" + b"\x00" * 20
+        assert _detect_type(raw, "image/jpeg") == "video/mp4"
+
+    def test_detects_webm(self):
+        raw = b"\x1a\x45\xdf\xa3" + b"\x00" * 20
+        assert _detect_type(raw, "image/jpeg") == "video/webm"
+
+    def test_detects_avi(self):
+        raw = b"RIFF\x00\x00\x00\x00AVI " + b"\x00" * 4
+        assert _detect_type(raw, "image/jpeg") == "video/avi"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _compress_image — edge cases
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCompressImageEdgeCases:
+    def test_large_image_resized(self):
+        url = app_module._compress_image(Image.new("RGB", (4000, 3000)))
+        assert url is not None
+        decoded = base64.b64decode(url.split("base64,")[1])
+        img = Image.open(io.BytesIO(decoded))
+        assert max(img.size) <= app_module.MAX_IMAGE_DIMENSION
+
+    def test_la_mode_converted(self):
+        url = app_module._compress_image(Image.new("LA", (10, 10)))
+        assert url is not None
+
+    def test_l_mode_converted(self):
+        url = app_module._compress_image(Image.new("L", (10, 10)))
+        assert url is not None
+
+    def test_compress_error_returns_none(self):
+        mock_img = MagicMock()
+        mock_img.mode = "RGB"
+        mock_img.size = (10, 10)
+        mock_img.save.side_effect = Exception("boom")
+        result = app_module._compress_image(mock_img)
+        assert result is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _video_to_data_urls (main.py version)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVideoToDataUrlsMain:
+    def test_opencv_not_installed(self):
+        with patch.dict("sys.modules", {"cv2": None}):
+            with pytest.raises(RuntimeError, match="opencv"):
+                app_module._video_to_data_urls(b"fake-video")
+
+    def test_video_open_failed(self):
+        import types
+        fake_cv2 = types.ModuleType("cv2")
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = False
+        fake_cv2.VideoCapture = MagicMock(return_value=mock_cap)
+        with patch.dict("sys.modules", {"cv2": fake_cv2}):
+            with pytest.raises(RuntimeError, match="Could not open"):
+                app_module._video_to_data_urls(b"bad-video")
+
+    def test_extracts_frames(self):
+        import types
+        fake_cv2 = types.ModuleType("cv2")
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {7: 5, 5: 30.0}.get(prop, 0)
+        mock_cap.read.return_value = (True, MagicMock())
+        fake_cv2.VideoCapture = MagicMock(return_value=mock_cap)
+        fake_cv2.CAP_PROP_FRAME_COUNT = 7
+        fake_cv2.CAP_PROP_FPS = 5
+        fake_cv2.CAP_PROP_POS_FRAMES = 1
+        fake_cv2.COLOR_BGR2RGB = 4
+        fake_cv2.cvtColor = MagicMock(return_value=MagicMock())
+
+        with patch.dict("sys.modules", {"cv2": fake_cv2}):
+            with patch.object(Image, "fromarray", return_value=Image.new("RGB", (10, 10))):
+                result = app_module._video_to_data_urls(b"fake-video")
+
+        assert len(result) == 5
+        assert all(u.startswith("data:image/jpeg;base64,") for u in result)
+
+    def test_zero_frames_returns_empty(self):
+        import types
+        fake_cv2 = types.ModuleType("cv2")
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.return_value = 0
+        fake_cv2.VideoCapture = MagicMock(return_value=mock_cap)
+        fake_cv2.CAP_PROP_FRAME_COUNT = 7
+        fake_cv2.CAP_PROP_FPS = 5
+        with patch.dict("sys.modules", {"cv2": fake_cv2}):
+            result = app_module._video_to_data_urls(b"empty-video")
+        assert result == []

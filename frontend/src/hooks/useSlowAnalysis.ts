@@ -45,6 +45,7 @@ function mapResult(raw: ApiAnalysisResult): AnalysisResult {
   };
 }
 
+/** Hook that enqueues files for slow-mode (Spot GPU) analysis and polls for completion. */
 export function useSlowAnalysis(
   setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>,
 ) {
