@@ -2,6 +2,9 @@
 
 export type ProcessingMode = 'fast' | 'slow';
 
+/** Inference provider selection */
+export type InferenceProvider = 'auto' | 'local' | 'cloud' | 'cloud-cmi';
+
 /** Status values used on UploadedFile and displayed in UI components */
 export type FileStatus =
   | 'pending'
@@ -31,9 +34,23 @@ export interface UploadedFile {
 
 /** Result returned by the analysis API — camelCase to match component expectations */
 export interface AnalysisResult {
+  /** Full chain-of-thought reasoning from the model (markdown) */
+  chainOfThought: string;
+  /** Concise summary of the analysis */
   summary: string;
-  keyObservations: string[];
+  /** Detailed description of what's in the image (markdown) */
+  description: string;
+  /** Analytical insights and deeper interpretations */
+  insights: string[];
+  /** Specific, factual observations about the image */
+  observations: string[];
+  /** Transcribed text from the image (OCR), copy-pastable */
+  ocrText: string;
+  /** Content classification (photograph, screenshot, etc.) */
   contentClassification: string;
+  /** Legacy: key observations (same as observations for backward compat) */
+  keyObservations: string[];
+  /** Legacy: extracted text (same as ocrText for backward compat) */
   extractedText: string;
   /** Only present in legacy/test data — kept for backward compat */
   fileId?: string;
@@ -45,6 +62,8 @@ export interface AnalysisResult {
   mode?: 'fast' | 'slow';
   model?: string;
   provider?: string;
+  /** Token usage stats from Bedrock */
+  usage?: { inputTokens?: number; outputTokens?: number };
 }
 
 export interface HealthResponse {
@@ -52,6 +71,10 @@ export interface HealthResponse {
   model: string;
   provider: string;
   model_loaded: boolean;
+  providers?: {
+    local: { name: string; status: string };
+    cloud: { name: string; status: string };
+  };
 }
 
 /** DynamoDB / API status — uppercase, used for polling responses */
@@ -70,9 +93,15 @@ export interface JobStatusResponse {
 
 /** Raw snake_case payload from Lambda/Bedrock (before camelCase conversion) */
 export interface ApiAnalysisResult {
+  chain_of_thought?: string;
   summary: string;
-  key_observations: string[];
+  description?: string;
+  insights?: string[];
+  observations?: string[];
+  ocr_text?: string;
   content_classification: string;
+  /** Legacy fields */
+  key_observations: string[];
   extracted_text: string;
   reasoning?: string;
   reasoning_token_count?: number;
@@ -81,6 +110,7 @@ export interface ApiAnalysisResult {
   mode?: string;
   model?: string;
   provider?: string;
+  usage?: { input_tokens?: number; output_tokens?: number };
 }
 
 /** UI-facing SlowJob status — lowercase for CSS class names */

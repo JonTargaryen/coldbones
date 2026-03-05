@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, WheelEvent } from 'react';
+import { useRef, useEffect, useState, useCallback, WheelEvent, DragEvent } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { UploadedFile } from '../types';
@@ -74,12 +74,42 @@ interface FilePreviewProps {
   files: UploadedFile[];
   onSelect: (fileId: string) => void;
   onRemove: (fileId: string) => void;
+  onReorder?: (fromIndex: number, toIndex: number) => void;
 }
 
-export function FilePreview({ file, files, onSelect, onRemove }: FilePreviewProps) {
+export function FilePreview({ file, files, onSelect, onRemove, onReorder }: FilePreviewProps) {
   const [zoom, setZoom] = useState(1);
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  }, []);
+
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  }, []);
+
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>, toIndex: number) => {
+    e.preventDefault();
+    const fromIndex = dragIndex;
+    setDragIndex(null);
+    setDragOverIndex(null);
+    if (fromIndex !== null && fromIndex !== toIndex && onReorder) {
+      onReorder(fromIndex, toIndex);
+    }
+  }, [dragIndex, onReorder]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  }, []);
 
   // Reset zoom and page when file changes
   useEffect(() => {
@@ -115,16 +145,21 @@ export function FilePreview({ file, files, onSelect, onRemove }: FilePreviewProp
       {/* Thumbnail strip for multiple files */}
       {files.length > 1 && (
         <div className="thumbnail-strip" role="list" aria-label="Uploaded files">
-          {files.map(f => (
+          {files.map((f, i) => (
             <div
               key={f.id}
-              className={`thumbnail ${file?.id === f.id ? 'active' : ''} ${f.status === 'error' ? 'error' : ''}`}
+              className={`thumbnail ${file?.id === f.id ? 'active' : ''} ${f.status === 'error' ? 'error' : ''} ${dragIndex === i ? 'dragging' : ''} ${dragOverIndex === i ? 'drag-over' : ''}`}
               onClick={() => onSelect(f.id)}
               role="listitem button"
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(f.id); }}
               aria-label={f.name}
               aria-current={file?.id === f.id}
+              draggable={!!onReorder}
+              onDragStart={(e) => handleDragStart(e, i)}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDrop={(e) => handleDrop(e, i)}
+              onDragEnd={handleDragEnd}
             >
               {isImage(f.file) ? (
                 <img src={f.previewUrl} alt={f.name} />

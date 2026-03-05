@@ -5,36 +5,34 @@ This is the single entry-point for all analysis requests.  It decides HOW the
 job will be processed and returns a 202 immediately so the browser isn't
 blocked waiting for a long inference run.
 
-Routing logic:
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │ POST /api/analyze { mode: "fast" }                                   │
-  │   is_desktop_alive() ──yes──→ _invoke_async()  → 202 + jobId        │
-  │                    ──no───→ _enqueue(fallback=True) → 202 + jobId   │
-  │                                                                       │
-  │ POST /api/analyze { mode: "offline" }                                │
-  │   always → _enqueue() → 202 + jobId                                  │
-  └─────────────────────────────────────────────────────────────────────┘
+Routing logic (cloud-primary -- optimised for low traffic + scale-to-zero):
 
-Why always 202 (not 200)?
-  API Gateway has a hard 29 s timeout.  LM Studio inference on a single GPU
-  for a multi-page PDF can take 30–90 s, so a synchronous response would always
-  time out.  Instead:
-    1. This router writes PROCESSING to DynamoDB and fires the orchestrator
-       Lambda asynchronously (InvocationType='Event' = fire-and-forget).
-    2. It returns 202 + jobId to the browser immediately.
-    3. The browser polls GET /api/status/{jobId} every few seconds.
-  This pattern is sometimes called the "async polling" or "job ticket" pattern.
+  provider="auto" (default):
+    Cloud-primary.  Routes straight to Bedrock On-Demand (Converse API).
+    Pay-per-token, zero cold start, true scale-to-zero.
 
-Offline / fallback queue path:
-  If the desktop is unreachable (LM Studio not running, power off, network
-  issue), jobs are written to SQS instead.  The desktop worker (worker/worker.py)
-  long-polls SQS and processes the queue whenever it's online.  This means the
-  system degrades gracefully rather than failing hard.
+  provider="local":
+    Desktop only.  is_desktop_alive() -> desktop, else SQS queue.
+
+  provider="cloud":
+    Bedrock On-Demand (same as auto).
+
+  provider="cloud-cmi":
+    Legacy Bedrock CMI path (imported model, 5-min billing windows).
+
+  mode="offline":
+    Always enqueue to SQS.
+
+Provider modes:
+  - 'auto'  (default): Cloud-primary -- Bedrock On-Demand (pay-per-token)
+  - 'local': Desktop only, SQS queue if offline
+  - 'cloud': Bedrock On-Demand (same as auto)
+  - 'cloud-cmi': Legacy Bedrock CMI (imported model, 5-min billing windows)
 
 Event (API Gateway proxy):
   POST /api/analyze
-  Body: { "s3Key": "uploads/…", "lang": "en", "mode": "fast|offline",
-          "filename": "photo.jpg" }
+  Body: { "s3Key": "uploads/...", "lang": "en", "mode": "fast|offline",
+          "provider": "auto|local|cloud|cloud-cmi", "filename": "photo.jpg" }
 """
 import json
 import os
@@ -48,6 +46,8 @@ from botocore.exceptions import ClientError
 
 sys.path.insert(0, '/var/task')
 from desktop_client import is_desktop_alive
+from bedrock_client import is_bedrock_available
+from bedrock_ondemand_client import is_ondemand_available
 
 lambda_client = boto3.client('lambda')
 sqs_client    = boto3.client('sqs')
@@ -73,6 +73,7 @@ def handler(event: dict, _context: Any) -> dict:
     s3_key   = body.get('s3Key', '').strip()
     lang     = body.get('lang', 'en').strip()
     mode     = body.get('mode', 'fast').strip().lower()
+    provider = body.get('provider', 'auto').strip().lower()  # auto | local | cloud | cloud-cmi
     filename = body.get('filename', 'file').strip()
 
     if not s3_key:
@@ -85,17 +86,36 @@ def handler(event: dict, _context: Any) -> dict:
         'lang':     lang,
         'filename': filename,
         'mode':     mode,
+        'provider': 'ondemand',  # default; overridden below
     }
 
     if mode == 'fast':
-        # Check desktop health before committing to the async path.
-        # Falls back to offline queue if the desktop GPU is not reachable.
-        if is_desktop_alive():
+        if provider == 'cloud-cmi':
+            # Legacy: explicitly requested Bedrock CMI (imported model)
+            payload['provider'] = 'bedrock'
             return _invoke_async(payload, job_id)
-        else:
-            print(f'[analyze_router] Desktop offline — routing job={job_id} to offline queue')
-            payload['mode'] = 'offline'
-            return _enqueue(payload, fallback=True)
+
+        if provider == 'cloud':
+            # Bedrock On-Demand (Converse API, pay-per-token)
+            payload['provider'] = 'ondemand'
+            return _invoke_async(payload, job_id)
+
+        if provider == 'local':
+            # User explicitly requested local desktop
+            if is_desktop_alive():
+                payload['provider'] = 'desktop'
+                return _invoke_async(payload, job_id)
+            else:
+                print(f'[analyze_router] Desktop offline -- routing job={job_id} to offline queue')
+                payload['mode'] = 'offline'
+                return _enqueue(payload, fallback=True)
+
+        # provider == 'auto' (default): cloud-primary -- Bedrock On-Demand
+        # Pay-per-token, zero cold start, true scale-to-zero.
+        # At low traffic this costs pennies/month vs $30+/month for CMI.
+        payload['provider'] = 'ondemand'
+        print(f'[analyze_router] Cloud-primary: routing job={job_id} to Bedrock On-Demand')
+        return _invoke_async(payload, job_id)
 
     # mode == 'offline' (or anything else)
     return _enqueue(payload)
@@ -116,7 +136,7 @@ def _invoke_async(payload: dict, job_id: str) -> dict:
 
     Why InvocationType='Event' and not 'RequestResponse'?
       'RequestResponse' would block this Lambda until the orchestrator finishes
-      (up to 10 min), which would exceed API Gateway's 29 s limit on *this*
+      (up to 10 min), which would exceed API Gateway\'s 29 s limit on *this*
       function.  'Event' decouples the two Lambdas entirely.
     """
     if not ORCHESTRATOR_FUNCTION_ARN:
@@ -135,7 +155,7 @@ def _invoke_async(payload: dict, job_id: str) -> dict:
                 'filename':  payload.get('filename', ''),
                 'lang':      payload.get('lang', 'en'),
                 'mode':      'fast',
-                'ttl':       int(datetime.now(timezone.utc).timestamp()) + 86400,
+                'ttl':       int(datetime.now(timezone.utc).timestamp()) + 2592000,  # 30 days
             })
         except Exception as e:
             print(f'[analyze_router] DynamoDB write failed (non-fatal): {e}')
@@ -178,7 +198,7 @@ def _enqueue(payload: dict, fallback: bool = False) -> dict:
                 'filename':  payload.get('filename', ''),
                 'lang':      payload.get('lang', 'en'),
                 'mode':      payload.get('mode', 'offline'),
-                'ttl':       int(datetime.now(timezone.utc).timestamp()) + 86400,
+                'ttl':       int(datetime.now(timezone.utc).timestamp()) + 2592000,  # 30 days
             })
         except Exception as e:
             print(f'[analyze_router] DynamoDB write failed (non-fatal): {e}')
@@ -189,7 +209,7 @@ def _enqueue(payload: dict, fallback: bool = False) -> dict:
             MessageBody=json.dumps(payload),
         )
         msg = (
-            'Desktop GPU offline — job queued. Will process when desktop comes back online.'
+            'Desktop GPU offline -- job queued. Will process when desktop comes back online.'
             if fallback
             else 'Job queued for processing. Poll /api/status/{jobId} for results.'
         )

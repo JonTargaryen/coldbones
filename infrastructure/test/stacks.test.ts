@@ -106,6 +106,8 @@ describe('ApiStack', () => {
       uploadBucket: storage.uploadBucket,
       jobsTable: storage.jobsTable,
       analysisQueue: queue.analysisQueue,
+      userPool: storage.userPool,
+      userPoolClient: storage.userPoolClient,
       modelName: 'Qwen/Qwen3.5-35B-A3B-AWQ',
     });
 

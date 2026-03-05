@@ -197,36 +197,37 @@ describe('AnalysisPanel', () => {
     expect(screen.getByText(/2\.5s/)).toBeInTheDocument()
   })
 
+  /** Helper: builds a full AnalysisResult with sensible defaults */
+  const makeResult = (overrides: Partial<AnalysisResult> = {}): AnalysisResult => ({
+    fileId: 'f1',
+    chainOfThought: '',
+    summary: 's',
+    description: '',
+    insights: [],
+    observations: [],
+    ocrText: '',
+    contentClassification: 'Photo',
+    keyObservations: [],
+    extractedText: '',
+    reasoning: '',
+    reasoningTokenCount: 0,
+    finishReason: 'stop',
+    processingTimeMs: 100,
+    mode: 'fast',
+    ...overrides,
+  })
+
   it('renders result summary', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1',
-      summary: 'This image shows a cat.',
-      keyObservations: ['Furry', 'Orange'],
-      contentClassification: 'Animal',
-      extractedText: '',
-      reasoning: '',
-      reasoningTokenCount: 0,
-      finishReason: 'stop',
-      processingTimeMs: 1234,
-      mode: 'fast',
-    }
+    const result = makeResult({ summary: 'This image shows a cat.' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     expect(screen.getByText('This image shows a cat.')).toBeInTheDocument()
   })
 
-  it('renders key observations list', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1',
-      summary: 'summary',
-      keyObservations: ['Obs 1', 'Obs 2', 'Obs 3'],
-      contentClassification: 'Photo',
-      extractedText: '',
-      reasoning: '',
-      reasoningTokenCount: 0,
-      finishReason: 'stop',
-      processingTimeMs: 500,
+  it('renders observations list', () => {
+    const result = makeResult({
+      observations: ['Obs 1', 'Obs 2', 'Obs 3'],
       mode: 'slow',
-    }
+    })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     expect(screen.getByText('Obs 1')).toBeInTheDocument()
     expect(screen.getByText('Obs 2')).toBeInTheDocument()
@@ -234,94 +235,53 @@ describe('AnalysisPanel', () => {
   })
 
   it('renders classification badge', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Document', extractedText: '',
-      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
-      processingTimeMs: 100, mode: 'fast',
-    }
+    const result = makeResult({ contentClassification: 'Document' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     expect(screen.getByText('Document')).toBeInTheDocument()
   })
 
-  it('shows reasoning toggle button when reasoning present', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Doc', extractedText: '',
-      reasoning: 'step-by-step reasoning here',
-      reasoningTokenCount: 42, finishReason: 'stop',
-      processingTimeMs: 800, mode: 'fast',
-    }
+  it('shows Chain of Thought toggle button when chainOfThought present', () => {
+    const result = makeResult({ chainOfThought: 'step-by-step reasoning here' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     const toggles = screen.getAllByRole('button')
     expect(toggles.length).toBeGreaterThan(0)
   })
 
-  it('expands reasoning on toggle click', async () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Doc', extractedText: '',
-      reasoning: 'step-by-step reasoning content', reasoningTokenCount: 42,
-      finishReason: 'stop', processingTimeMs: 800, mode: 'fast',
-    }
+  it('expands Chain of Thought on toggle click', async () => {
+    const result = makeResult({ chainOfThought: 'step-by-step reasoning content' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
-    const toggleBtn = screen.getByRole('button', { name: /reasoning/i })
+    const toggleBtn = screen.getByRole('button', { name: /chain of thought/i })
     await userEvent.click(toggleBtn)
     expect(screen.getByText('step-by-step reasoning content')).toBeInTheDocument()
   })
 
   it('shows truncation warning when finishReason is "length"', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Doc', extractedText: '',
-      reasoning: '', reasoningTokenCount: 0, finishReason: 'length',
-      processingTimeMs: 100, mode: 'fast',
-    }
+    const result = makeResult({ finishReason: 'length' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     expect(screen.getByRole('alert')).toBeInTheDocument()
   })
 
-  it('renders extracted text when present', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Doc', extractedText: 'Invoice total: $500',
-      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
-      processingTimeMs: 100, mode: 'fast',
-    }
+  it('renders OCR text when present', () => {
+    const result = makeResult({ ocrText: 'Invoice total: $500' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     expect(screen.getByText('Invoice total: $500')).toBeInTheDocument()
   })
 
-  it('does not render extracted text section for "No text detected."', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Photo', extractedText: 'No text detected.',
-      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
-      processingTimeMs: 100, mode: 'fast',
-    }
+  it('does not render OCR text section for "No text detected."', () => {
+    const result = makeResult({ ocrText: 'No text detected.' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
-    // The extracted text section should be hidden
+    // The OCR text section should be hidden
     expect(screen.queryByText('No text detected.')).not.toBeInTheDocument()
   })
 
   it('shows Fast mode in result meta', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Doc', extractedText: '',
-      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
-      processingTimeMs: 1000, mode: 'fast',
-    }
+    const result = makeResult({ processingTimeMs: 1000, mode: 'fast' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     expect(screen.getByText(/fast/i)).toBeInTheDocument()
   })
 
   it('shows Slow mode in result meta', () => {
-    const result: AnalysisResult = {
-      fileId: 'f1', summary: 's', keyObservations: [],
-      contentClassification: 'Doc', extractedText: '',
-      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
-      processingTimeMs: 10000, mode: 'slow',
-    }
+    const result = makeResult({ processingTimeMs: 10000, mode: 'slow' })
     r(<AnalysisPanel result={result} isAnalyzing={false} error={null} elapsedMs={0} />)
     expect(screen.getByText(/slow/i)).toBeInTheDocument()
   })
@@ -372,9 +332,11 @@ describe('JobTracker', () => {
 
   it('shows "Complete" badge for complete job', () => {
     const result: AnalysisResult = {
-      fileId: 'f1', summary: 'Done!', keyObservations: [],
-      contentClassification: 'Photo', extractedText: '', reasoning: '',
-      reasoningTokenCount: 0, finishReason: 'stop', processingTimeMs: 500, mode: 'slow',
+      fileId: 'f1', chainOfThought: '', summary: 'Done!', description: '',
+      insights: [], observations: [], ocrText: '',
+      keyObservations: [], contentClassification: 'Photo', extractedText: '',
+      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
+      processingTimeMs: 500, mode: 'slow',
     }
     r(<JobTracker jobs={[makeJob({ status: 'complete', result })]} />)
     expect(screen.getByText('Complete')).toBeInTheDocument()
@@ -414,9 +376,11 @@ describe('JobTracker', () => {
 
   it('clicking complete job header expands analysis panel', async () => {
     const result: AnalysisResult = {
-      fileId: 'f1', summary: 'My summary text', keyObservations: [],
-      contentClassification: 'Photo', extractedText: '', reasoning: '',
-      reasoningTokenCount: 0, finishReason: 'stop', processingTimeMs: 500, mode: 'slow',
+      fileId: 'f1', chainOfThought: '', summary: 'My summary text', description: '',
+      insights: [], observations: [], ocrText: '',
+      keyObservations: [], contentClassification: 'Photo', extractedText: '',
+      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
+      processingTimeMs: 500, mode: 'slow',
     }
     r(<JobTracker jobs={[makeJob({ status: 'complete', result })]} />)
     const header = screen.getByText('test.png').closest('[role="button"]')!
@@ -426,9 +390,11 @@ describe('JobTracker', () => {
 
   it('clicking again collapses the analysis panel', async () => {
     const result: AnalysisResult = {
-      fileId: 'f1', summary: 'My summary text', keyObservations: [],
-      contentClassification: 'Photo', extractedText: '', reasoning: '',
-      reasoningTokenCount: 0, finishReason: 'stop', processingTimeMs: 500, mode: 'slow',
+      fileId: 'f1', chainOfThought: '', summary: 'My summary text', description: '',
+      insights: [], observations: [], ocrText: '',
+      keyObservations: [], contentClassification: 'Photo', extractedText: '',
+      reasoning: '', reasoningTokenCount: 0, finishReason: 'stop',
+      processingTimeMs: 500, mode: 'slow',
     }
     r(<JobTracker jobs={[makeJob({ status: 'complete', result })]} />)
     const header = screen.getByText('test.png').closest('[role="button"]')!

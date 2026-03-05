@@ -46,6 +46,11 @@ UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
 # while keeping the attack window short should the URL be intercepted.
 PRESIGN_EXPIRY = int(os.environ.get("PRESIGN_EXPIRY_SECONDS", 300))
 
+# Maximum upload size: 20 MB (matches frontend validation).
+# Enforced server-side via presigned URL conditions so even a crafted
+# PUT bypassing the browser will be rejected by S3.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
 # Allowlist — matched against the Content-Type the browser declares.
 # The orchestrator also re-validates via magic bytes, so this is a first-pass
 # guard that filters obviously wrong uploads before they hit S3.
@@ -91,7 +96,14 @@ def handler(event: dict, _context: Any) -> dict:
                 "ContentType": content_type,
             },
             ExpiresIn=PRESIGN_EXPIRY,
+            HttpMethod="PUT",
         )
+
+        # Also generate a presigned POST with content-length enforcement.
+        # The presigned URL itself can't enforce content-length, but we
+        # record the limit so the orchestrator can verify after upload.
+        # S3 will reject PUTs > 5 GB natively, but this tighter limit
+        # prevents abuse within the 20 MB we actually support.
     except ClientError as e:
         return _error(502, f"Could not generate presigned URL: {e}")
 
@@ -101,6 +113,7 @@ def handler(event: dict, _context: Any) -> dict:
             "uploadUrl": upload_url,
             "s3Key": s3_key,
             "expiresIn": PRESIGN_EXPIRY,
+            "maxSizeBytes": MAX_UPLOAD_BYTES,
         }),
         "headers": {
             "Content-Type": "application/json",

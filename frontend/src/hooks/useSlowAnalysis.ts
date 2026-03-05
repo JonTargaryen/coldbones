@@ -6,6 +6,7 @@ import type {
   AnalysisResult,
   ApiAnalysisResult,
   JobStatusResponse,
+  InferenceProvider,
 } from '../types';
 
 // Re-export SlowJob so components that do:
@@ -13,23 +14,22 @@ import type {
 // continue to work without needing to know its canonical location (types/index.ts).
 export type { SlowJob } from '../types';
 
-// Same-origin in prod (empty string), localhost:8000 in local dev.
-const API = import.meta.env.VITE_API_BASE_URL ?? '';
-
-// Slow mode polls less frequently than fast mode because offline/queued jobs
-// can sit in SQS for minutes or hours waiting for the desktop to come online.
-const POLL_INTERVAL_MS = 4000;
-// 15 minutes — generous ceiling for the desktop worker to start and finish.
-const POLL_TIMEOUT_MS = 15 * 60 * 1000;
+import { API_BASE_URL as API, SLOW_POLL_INTERVAL_MS as POLL_INTERVAL_MS, SLOW_POLL_TIMEOUT_MS as POLL_TIMEOUT_MS } from '../config';
 
 const NO_TEXT_SENTINEL = 'No text detected.';
 
 function mapResult(raw: ApiAnalysisResult): AnalysisResult {
-  const extractedText = raw.extracted_text ?? '';
+  const extractedText = raw.extracted_text ?? raw.ocr_text ?? '';
+  const ocrText = raw.ocr_text ?? raw.extracted_text ?? '';
   return {
+    chainOfThought: raw.chain_of_thought ?? '',
     summary: raw.summary ?? '',
-    keyObservations: raw.key_observations ?? [],
+    description: raw.description ?? '',
+    insights: raw.insights ?? [],
+    observations: raw.observations ?? raw.key_observations ?? [],
+    ocrText: ocrText === NO_TEXT_SENTINEL ? '' : ocrText,
     contentClassification: raw.content_classification ?? '',
+    keyObservations: raw.key_observations ?? raw.observations ?? [],
     extractedText: extractedText === NO_TEXT_SENTINEL ? '' : extractedText,
     reasoning: raw.reasoning ?? '',
     reasoningTokenCount: raw.reasoning_token_count ?? 0,
@@ -38,6 +38,10 @@ function mapResult(raw: ApiAnalysisResult): AnalysisResult {
     mode: (raw.mode as 'fast' | 'slow') ?? 'slow',
     model: raw.model,
     provider: raw.provider,
+    usage: raw.usage ? {
+      inputTokens: raw.usage.input_tokens ?? 0,
+      outputTokens: raw.usage.output_tokens ?? 0,
+    } : undefined,
   };
 }
 
@@ -52,6 +56,7 @@ export function useSlowAnalysis(
     s3Key: string,
     filename: string,
     lang: string,
+    provider: InferenceProvider = 'auto',
   ) => {
     const update = (patch: Partial<UploadedFile>) =>
       setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, ...patch } : f)));
@@ -62,7 +67,7 @@ export function useSlowAnalysis(
       const res = await fetch(`${API}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ s3Key, filename, lang, mode: 'slow' }),
+        body: JSON.stringify({ s3Key, filename, lang, mode: 'slow', provider }),
       });
 
       if (!res.ok) {

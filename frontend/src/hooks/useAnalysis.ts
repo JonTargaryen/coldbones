@@ -1,28 +1,23 @@
 import { useCallback } from 'react';
-import type { UploadedFile, AnalysisResult, ApiAnalysisResult } from '../types';
-
-// Same-origin routing via CloudFront in prod; override to localhost:8000 for
-// local dev via frontend/.env (VITE_API_BASE_URL=http://localhost:8000).
-const API = import.meta.env.VITE_API_BASE_URL ?? '';
-
-// How long to wait between status polls.  3 s is a good balance:
-// short enough that the user sees results within a few seconds of completion,
-// long enough to avoid hammering API Gateway (which charges per request).
-const POLL_INTERVAL_MS = 3000;
-// Give up after 10 minutes.  A 35B model on a single GPU should finish a
-// single image in under 2 minutes; 10 min is a very conservative ceiling.
-const POLL_TIMEOUT_MS  = 10 * 60 * 1000;
+import type { UploadedFile, AnalysisResult, ApiAnalysisResult, InferenceProvider } from '../types';
+import { API_BASE_URL as API, FAST_POLL_INTERVAL_MS as POLL_INTERVAL_MS, FAST_POLL_TIMEOUT_MS as POLL_TIMEOUT_MS } from '../config';
 
 /** Normalize the sentinel string the Lambda puts in extracted_text when no text is found. */
 const NO_TEXT_SENTINEL = 'No text detected.';
 
 /** Convert snake_case API response to camelCase AnalysisResult */
 function mapResult(raw: ApiAnalysisResult): AnalysisResult {
-  const extractedText = raw.extracted_text ?? '';
+  const extractedText = raw.extracted_text ?? raw.ocr_text ?? '';
+  const ocrText = raw.ocr_text ?? raw.extracted_text ?? '';
   return {
+    chainOfThought: raw.chain_of_thought ?? '',
     summary: raw.summary ?? '',
-    keyObservations: raw.key_observations ?? [],
+    description: raw.description ?? '',
+    insights: raw.insights ?? [],
+    observations: raw.observations ?? raw.key_observations ?? [],
+    ocrText: ocrText === NO_TEXT_SENTINEL ? '' : ocrText,
     contentClassification: raw.content_classification ?? '',
+    keyObservations: raw.key_observations ?? raw.observations ?? [],
     extractedText: extractedText === NO_TEXT_SENTINEL ? '' : extractedText,
     reasoning: raw.reasoning ?? '',
     reasoningTokenCount: raw.reasoning_token_count ?? 0,
@@ -31,6 +26,10 @@ function mapResult(raw: ApiAnalysisResult): AnalysisResult {
     mode: (raw.mode as 'fast' | 'slow') ?? 'fast',
     model: raw.model,
     provider: raw.provider,
+    usage: raw.usage ? {
+      inputTokens: raw.usage.input_tokens ?? 0,
+      outputTokens: raw.usage.output_tokens ?? 0,
+    } : undefined,
   };
 }
 
@@ -42,6 +41,7 @@ export function useAnalysis(
     s3Key: string,
     filename: string,
     lang: string,
+    provider: InferenceProvider = 'auto',
   ) => {
     const update = (patch: Partial<UploadedFile>) =>
       setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, ...patch } : f)));
@@ -57,7 +57,7 @@ export function useAnalysis(
       const res = await fetch(`${API}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ s3Key, filename, lang, mode: 'fast' }),
+        body: JSON.stringify({ s3Key, filename, lang, mode: 'fast', provider }),
       });
 
       if (!res.ok) {

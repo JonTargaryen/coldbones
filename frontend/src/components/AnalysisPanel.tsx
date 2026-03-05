@@ -1,5 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 import { useLanguage } from '../contexts/LanguageContext';
+import { resultToMarkdown, downloadText } from '../utils/export';
 import type { AnalysisResult } from '../types';
 
 interface AnalysisPanelProps {
@@ -8,11 +12,63 @@ interface AnalysisPanelProps {
   currentFileName?: string;
   error: string | null;
   elapsedMs: number;
+  estimateMs?: number | null;
 }
 
-export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, elapsedMs }: AnalysisPanelProps) {
-  const [reasoningOpen, setReasoningOpen] = useState(false);
+/** Copy text to clipboard with visual feedback */
+function useCopyToClipboard() {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, []);
+  return { copied, copy };
+}
+
+/** Auto-scrolling container that scrolls to bottom when content changes */
+function ScrollBox({ children, className }: { children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (autoScroll && ref.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+    }
+  }, [children, autoScroll]);
+
+  const handleScroll = () => {
+    if (!ref.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = ref.current;
+    // If user scrolled up more than 50px from bottom, disable auto-scroll
+    setAutoScroll(scrollHeight - scrollTop - clientHeight < 50);
+  };
+
+  return (
+    <div ref={ref} className={className} onScroll={handleScroll}>
+      {children}
+    </div>
+  );
+}
+
+export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, elapsedMs, estimateMs }: AnalysisPanelProps) {
+  const [cotOpen, setCotOpen] = useState(false);
   const { t } = useLanguage();
+  const ocrCopy = useCopyToClipboard();
 
   if (error) {
     return (
@@ -32,6 +88,9 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
         </p>
         <p className="analysis-elapsed" aria-label={`${(elapsedMs / 1000).toFixed(1)} seconds elapsed`}>
           {(elapsedMs / 1000).toFixed(1)}s
+          {estimateMs && estimateMs > elapsedMs && (
+            <span className="analysis-eta"> / ~{(estimateMs / 1000).toFixed(0)}s est.</span>
+          )}
         </p>
         <p className="analysis-thinking-hint">{t.thinkingHint}</p>
       </div>
@@ -48,67 +107,140 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
     );
   }
 
+  const hasCoT = result.chainOfThought && result.chainOfThought.length > 0;
+  const hasInsights = result.insights && result.insights.length > 0;
+  const hasObservations = result.observations && result.observations.length > 0;
+  const hasOcr = result.ocrText && result.ocrText !== 'No text detected.' && result.ocrText.length > 0;
+  const hasDescription = result.description && result.description.length > 0;
+
   return (
     <div className="analysis-panel has-result" role="region" aria-label={t.summary}>
-      {/* Reasoning / Thinking section — collapsible */}
-      {result.reasoning && (
-        <div className="result-section reasoning-section">
+
+      {/* ── Summary ── */}
+      <div className="result-section summary-section">
+        <h3>{t.summary}</h3>
+        <div className="markdown-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{result.summary}</ReactMarkdown>
+        </div>
+      </div>
+
+      {/* ── Chain of Thought — collapsible ── */}
+      {hasCoT && (
+        <div className="result-section cot-section">
           <button
-            className="reasoning-toggle"
-            onClick={() => setReasoningOpen(!reasoningOpen)}
-            aria-expanded={reasoningOpen}
-            aria-controls="reasoning-content"
+            className="cot-toggle"
+            onClick={() => setCotOpen(!cotOpen)}
+            aria-expanded={cotOpen}
+            aria-controls="cot-content"
           >
-            <span className="reasoning-toggle-icon" aria-hidden="true">{reasoningOpen ? '▼' : '▶'}</span>
+            <span className="cot-toggle-icon" aria-hidden="true">{cotOpen ? '▼' : '▶'}</span>
             <h3>
-              {t.reasoning}
-              <span className="reasoning-meta">
-                {(result.reasoningTokenCount ?? 0).toLocaleString()} {t.tokens}
+              Chain of Thought
+              <span className="cot-meta">
+                {result.chainOfThought.length.toLocaleString()} chars
               </span>
             </h3>
           </button>
-          {reasoningOpen && (
-            <pre className="reasoning-content" id="reasoning-content" tabIndex={0}>{result.reasoning}</pre>
+          {cotOpen && (
+            <ScrollBox className="cot-content" >
+              <div className="markdown-body" id="cot-content" tabIndex={0}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{result.chainOfThought}</ReactMarkdown>
+              </div>
+            </ScrollBox>
           )}
         </div>
       )}
 
-      <div className="result-section">
-        <h3>{t.summary}</h3>
-        <p>{result.summary}</p>
-      </div>
+      {/* ── Description ── */}
+      {hasDescription && (
+        <div className="result-section description-section">
+          <h3>Description</h3>
+          <div className="markdown-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{result.description}</ReactMarkdown>
+          </div>
+        </div>
+      )}
 
-      {result.keyObservations.length > 0 && (
-        <div className="result-section">
-          <h3>{t.keyObservations}</h3>
+      {/* ── Insights ── */}
+      {hasInsights && (
+        <div className="result-section insights-section">
+          <h3>Insights</h3>
+          <ul className="insights-list">
+            {result.insights.map((insight, i) => (
+              <li key={i}>
+                <div className="markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{insight}</ReactMarkdown>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── Observations ── */}
+      {hasObservations && (
+        <div className="result-section observations-section">
+          <h3>Observations</h3>
           <ul>
-            {result.keyObservations.map((obs, i) => (
+            {result.observations.map((obs, i) => (
               <li key={i}>{obs}</li>
             ))}
           </ul>
         </div>
       )}
 
+      {/* ── Content Classification ── */}
       <div className="result-section">
         <h3>{t.contentClassification}</h3>
         <span className="classification-badge">{result.contentClassification}</span>
       </div>
 
-      {result.extractedText && result.extractedText !== 'No text detected.' && (
-        <div className="result-section">
-          <h3>{t.extractedText}</h3>
-          <pre className="extracted-text" tabIndex={0}>{result.extractedText}</pre>
+      {/* ── OCR Text — copy-pastable ── */}
+      {hasOcr && (
+        <div className="result-section ocr-section">
+          <div className="ocr-header">
+            <h3>Extracted Text (OCR)</h3>
+            <button
+              className="btn-copy"
+              onClick={() => ocrCopy.copy(result.ocrText)}
+              title="Copy to clipboard"
+              aria-label="Copy extracted text to clipboard"
+            >
+              {ocrCopy.copied ? '✓ Copied' : '⧉ Copy'}
+            </button>
+          </div>
+          <ScrollBox className="ocr-text-box">
+            <pre className="ocr-text" tabIndex={0}>{result.ocrText}</pre>
+          </ScrollBox>
         </div>
       )}
 
+      {/* ── Metadata ── */}
       <div className="result-meta">
         <span>{t.mode}: {result.mode === 'fast' ? t.fast : t.slow}</span>
         <span>{t.processedIn(((result.processingTimeMs ?? 0) / 1000).toFixed(1))}</span>
+        {result.usage && (
+          <span title="Token usage: input / output">
+            {(result.usage.inputTokens ?? 0).toLocaleString()}↓ / {(result.usage.outputTokens ?? 0).toLocaleString()}↑ tokens
+          </span>
+        )}
         {result.finishReason === 'length' && (
           <span className="finish-warning" title={t.truncatedTooltip} role="alert">
             {t.truncated}
           </span>
         )}
+        <button
+          className="btn-export"
+          onClick={() => {
+            const md = resultToMarkdown(currentFileName ?? 'analysis', result);
+            const base = (currentFileName ?? 'analysis').replace(/\.[^.]+$/, '');
+            downloadText(md, `${base}-analysis.md`);
+          }}
+          title="Export analysis as Markdown"
+          aria-label="Export analysis as Markdown"
+        >
+          ↓ Export
+        </button>
       </div>
     </div>
   );

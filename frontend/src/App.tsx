@@ -6,22 +6,32 @@ import { AnalysisPanel } from './components/AnalysisPanel';
 import { JobTracker } from './components/JobTracker';
 import { ModeToggle } from './components/ModeToggle';
 import { LanguagePicker } from './components/LanguagePicker';
+import { ProviderPicker } from './components/ProviderPicker';
+import { ToastContainer } from './components/ToastContainer';
 import { useUpload } from './hooks/useUpload';
 import { useAnalysis } from './hooks/useAnalysis';
 import { useSlowAnalysis } from './hooks/useSlowAnalysis';
+import { useHistory } from './hooks/useHistory';
+import { useToast } from './hooks/useToast';
+import { useEstimate } from './hooks/useEstimate';
 import { useMode } from './contexts/ModeContext';
 import { useLanguage } from './contexts/LanguageContext';
+import { useProvider } from './contexts/ProviderContext';
 import type { HealthResponse } from './types';
 
-const API = import.meta.env.VITE_API_BASE_URL ?? '';
+import { API_BASE_URL as API } from './config';
 
 export default function App() {
   const { mode } = useMode();
   const { lang, t } = useLanguage();
+  const { provider } = useProvider();
 
-  const { files, setFiles, addFiles, removeFile, clearAll } = useUpload();
+  const { files, setFiles, addFiles, removeFile, clearAll, reorderFiles } = useUpload();
   const { analyze } = useAnalysis(setFiles);
   const { slowJobs, enqueue } = useSlowAnalysis(setFiles);
+  const { addEntry: addHistoryEntry } = useHistory();
+  const { toasts, addToast, dismiss: dismissToast } = useToast();
+  const { estimateMs, recordTime } = useEstimate();
 
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -91,6 +101,23 @@ export default function App() {
     };
   }, [files, selectedFileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Save completed analyses to history + toast
+  const savedIdsRef = useRef(new Set<string>());
+  useEffect(() => {
+    for (const f of files) {
+      if (f.status === 'complete' && f.result && !savedIdsRef.current.has(f.id)) {
+        savedIdsRef.current.add(f.id);
+        addHistoryEntry(f.name, f.result);
+        addToast(`Analysis complete: ${f.name}`, 'success');
+        if (f.result.processingTimeMs) recordTime(f.result.processingTimeMs);
+      }
+      if (f.status === 'error' && f.error && !savedIdsRef.current.has(f.id)) {
+        savedIdsRef.current.add(f.id);
+        addToast(`Error: ${f.error}`, 'error');
+      }
+    }
+  }, [files, addHistoryEntry]);
+
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null;
   // isReady gates the upload zone AND the analyse button.
   // Both conditions must be true:
@@ -115,9 +142,9 @@ export default function App() {
     if (!selectedFile?.s3Key) return;
     setElapsedMs(0);
     if (mode === 'slow') {
-      await enqueue(selectedFile.id, selectedFile.s3Key, selectedFile.file.name, lang);
+      await enqueue(selectedFile.id, selectedFile.s3Key, selectedFile.file.name, lang, provider);
     } else {
-      await analyze(selectedFile.id, selectedFile.s3Key, selectedFile.file.name, lang);
+      await analyze(selectedFile.id, selectedFile.s3Key, selectedFile.file.name, lang, provider);
     }
   };
 
@@ -135,6 +162,7 @@ export default function App() {
         <div className="header-right">
           <LanguagePicker />
           <ModeToggle disabled={isBusy} />
+          <ProviderPicker disabled={isBusy} />
           <div className="health-indicator">
             {health?.model_loaded ? (
               <span
@@ -230,6 +258,7 @@ export default function App() {
                 files={files}
                 onSelect={setSelectedFileId}
                 onRemove={removeFile}
+                onReorder={reorderFiles}
               />
             </div>
             <div className="result-panel">
@@ -239,6 +268,7 @@ export default function App() {
                 currentFileName={selectedFile?.file.name}
                 error={selectedFile?.error ?? null}
                 elapsedMs={elapsedMs}
+                estimateMs={estimateMs}
               />
             </div>
           </section>
@@ -251,6 +281,9 @@ export default function App() {
           <JobTracker jobs={slowJobs} />
         </aside>
       )}
+
+      {/* Toast notifications */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

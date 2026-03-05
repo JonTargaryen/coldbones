@@ -9,38 +9,46 @@ asynchronously by analyze_router with InvocationType='Event', which means:
     status will stay PROCESSING until the frontend poll times out.  This is
     acceptable because the orchestrator writes its own FAILED status on error.
 
+Tri-provider support:
+  The orchestrator supports three inference backends:
+    1. Bedrock On-Demand (default) — Converse API, pay-per-token, scale-to-zero
+    2. Desktop (LM Studio via Tailscale Funnel) — the RTX 5090 GPU
+    3. Bedrock CMI (legacy) — Custom Model Import, Qwen2.5-VL on AWS infra
+
+  The provider is selected by the analyze_router via the event's 'provider'
+  field:
+    'ondemand' → bedrock_ondemand_client.py (Converse API, cloud-primary default)
+    'desktop'  → desktop_client.py (LM Studio via Tailscale)
+    'bedrock'  → bedrock_client.py (CMI, legacy path)
+
 Full flow:
   1. Download the file from S3 using the s3Key written by the presign Lambda.
   2. Detect the true file type from magic bytes (not from the extension or the
      Content-Type header, which can be spoofed).
-  3. Convert to one or more base64-encoded PNG data-URLs:
-       - Images: PIL normalises to RGB PNG (handles EXIF rotation, palette
-         modes, TIFF multi-strip, etc.).
-       - PDFs: pdf2image renders each page at 150 DPI → PNG.  Capped at
-         MAX_PDF_PAGES to keep request size and inference time bounded.
-  4. Build a multimodal chat completion request and send it to LM Studio via
-     the shared desktop_client.  The system prompt instructs the model to
-     return a strict JSON object — no markdown fences, no prose.
-  5. Parse and validate the JSON response.  Falls back gracefully if the model
-     wraps the JSON in a code block (common with smaller models).
-  6. Write the full result JSON back to S3 next to the original upload, so
-     it can be retrieved without hitting DynamoDB (useful for debugging).
+  3. Convert to one or more base64-encoded PNG data-URLs.
+  4. Route inference to the selected provider (ondemand, desktop, or bedrock-cmi).
+  5. Parse and validate the structured response (CoT, summary, description,
+     insights, observations, OCR text).
+  6. Write the full result JSON back to S3 next to the original upload.
   7. Update the DynamoDB job record to COMPLETED (or FAILED on any error),
-     which unblocks the frontend's polling loop.
+     linking the upload S3 key with the result S3 key.
 
 Desktop endpoint discovered at runtime from SSM (see desktop_client.py):
   /coldbones/desktop-url  → Tailscale Funnel base URL
   /coldbones/desktop-port → LM Studio port (443 when using Funnel)
 
+Bedrock model ARN discovered from SSM (see bedrock_client.py):
+  /coldbones/bedrock-model-arn → Bedrock imported model ARN
+
 Event shape (sent by analyze_router):
   { "jobId": "<uuid>", "s3Key": "uploads/<uuid>/photo.jpg",
-    "lang": "en", "filename": "photo.jpg", "mode": "fast" }
+    "lang": "en", "filename": "photo.jpg", "mode": "fast",
+    "provider": "ondemand|desktop|bedrock" }
 """
 
 import base64
 import io
 import json
-import logging
 import os
 import re
 import sys
@@ -49,23 +57,25 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
 import boto3
 from botocore.exceptions import ClientError
 from PIL import Image
 
-# Desktop client — resolves LM Studio endpoint from SSM (Tailscale Funnel URL)
+# Inference clients — resolved from SSM at runtime
 sys.path.insert(0, '/var/task')
 from desktop_client import get_openai_client
+from bedrock_client import invoke_bedrock
+from bedrock_ondemand_client import invoke_ondemand
+from logger import get_logger
+
+log = get_logger('analyze_orchestrator')
 
 s3_client  = boto3.client('s3')
 dynamodb   = boto3.resource('dynamodb')
 
 UPLOAD_BUCKET    = os.environ['UPLOAD_BUCKET']
 JOBS_TABLE_NAME  = os.environ.get('JOBS_TABLE', '')
-MAX_TOKENS       = int(os.environ.get('MAX_INFERENCE_TOKENS', 8192))
+MAX_TOKENS       = int(os.environ.get('MAX_INFERENCE_TOKENS', 16384))
 MAX_PDF_PAGES    = int(os.environ.get('MAX_PDF_PAGES', 20))
 
 HEADERS = {
@@ -73,18 +83,53 @@ HEADERS = {
     'Access-Control-Allow-Origin': '*',
 }
 
-SYSTEM_PROMPT = """You are a precise visual analyst. Examine the provided image carefully.
-Think through what you see step by step, then respond with a JSON object
-(no markdown fences, no extra text) matching this exact schema:
+# ── Chain-of-Thought System Prompt ──────────────────────────────────────────────
+# Qwen3 VL supports native chain-of-thought reasoning.  The prompt instructs the
+# model to think deeply, then produce a structured JSON response with:
+#   - chain_of_thought: full internal reasoning (displayed in collapsible UI)
+#   - summary: concise summary of the analysis
+#   - description: detailed description of what's in the image
+#   - insights: analytical observations and deeper interpretations
+#   - observations: factual, specific things noticed in the image
+#   - ocr_text: any readable text, accurately transcribed for copy-paste
+#   - content_classification: what type of content this is
+
+SYSTEM_PROMPT = """You are an expert visual analyst with deep knowledge across many domains. When given an image, you must perform a thorough, multi-layered analysis.
+
+## Your Process
+
+Think through what you see step by step. Consider composition, context, details, text, colors, objects, people, symbols, and any domain-specific elements.
+
+## Response Format
+
+Respond with a JSON object (no markdown fences, no extra text outside the JSON) matching this exact schema:
 
 {
-  "summary": "A concise 2-3 sentence description of what this image contains.",
-  "key_observations": ["observation 1", "observation 2", "..."],
-  "content_classification": "One of: photograph, screenshot, chart/graph, diagram, invoice/receipt, form/document, handwriting, artwork, map, medical image, or other (specify).",
-  "extracted_text": "If there is readable text in the image, transcribe it accurately. If no text, write: No text detected."
+  "chain_of_thought": "Your complete internal reasoning process. Walk through everything you observe, consider, and deduce. Be thorough and detailed — this is your scratch pad. Use markdown formatting: headers, bullet points, bold, italic, code blocks as appropriate. This section can be long.",
+  "summary": "A concise 2-4 sentence overview of the image and your key findings. This should be the TL;DR that someone can read quickly.",
+  "description": "A detailed, rich description of what the image contains. Describe the scene, objects, people, layout, colors, composition, and context. Write in flowing prose, not bullet points. Use markdown for emphasis where helpful.",
+  "insights": [
+    "An analytical observation or deeper interpretation — not just what you see, but what it means or implies.",
+    "Another insight — patterns, anomalies, relationships, context, or significance.",
+    "Additional insights as warranted by the image content."
+  ],
+  "observations": [
+    "A specific, factual observation about something visible in the image.",
+    "Another concrete observation — details, measurements, quantities, positions.",
+    "Further observations as needed."
+  ],
+  "ocr_text": "If there is readable text in the image, transcribe it accurately and completely, preserving formatting (line breaks, spacing, structure) as much as possible. If no text is present, write: No text detected.",
+  "content_classification": "One of: photograph, screenshot, chart/graph, diagram, invoice/receipt, form/document, handwriting, artwork, map, medical image, technical drawing, UI/wireframe, meme, social media post, or other (specify)."
 }
 
-Be factual and specific. Do not speculate beyond what is clearly visible.
+## Guidelines
+
+- **Chain of Thought**: Be genuinely thorough. Examine every region of the image. Note things others might miss.
+- **Description**: Paint a vivid picture in words. Someone who can't see the image should be able to visualize it.
+- **Insights**: Go beyond surface observations. What does this image tell us? What's interesting or notable?
+- **OCR**: Transcribe ALL visible text, including small print, watermarks, timestamps, labels, buttons, captions. Preserve the original formatting and structure for easy copy-paste.
+- **Be factual**: Don't speculate beyond what is clearly visible. Distinguish between observations and inferences.
+
 Your final output must be ONLY the JSON object."""
 
 LANGUAGE_INSTRUCTIONS = {
@@ -100,6 +145,10 @@ def handler(event: dict, _context: Any) -> dict:
     s3_key   = event.get('s3Key', '')
     lang     = event.get('lang', 'en')
     filename = event.get('filename', 'file')
+    provider = event.get('provider', 'ondemand')  # 'ondemand', 'desktop', or 'bedrock'
+
+    log.set_job_id(job_id)
+    log.info('orchestrator_start', provider=provider, s3_key=s3_key, filename=filename, lang=lang)
 
     if not s3_key:
         return _error(400, 'Missing s3Key', job_id)
@@ -108,14 +157,21 @@ def handler(event: dict, _context: Any) -> dict:
 
     # ── Download from S3 ────────────────────────────────────────────────────
     try:
-        obj = s3_client.get_object(Bucket=UPLOAD_BUCKET, Key=s3_key)
-        file_bytes = obj['Body'].read()
+        with log.timed('s3_download', bucket=UPLOAD_BUCKET, key=s3_key):
+            obj = s3_client.get_object(Bucket=UPLOAD_BUCKET, Key=s3_key)
+            file_bytes = obj['Body'].read()
+            file_size = len(file_bytes)
+        log.info('s3_download_complete', file_size_bytes=file_size)
     except ClientError as e:
+        log.exception('s3_download_failed', exc=e)
         return _error(502, f'S3 download failed: {e}', job_id)
 
     content_type = _detect_magic_type(file_bytes, s3_key)
     if not content_type:
+        log.error('unsupported_file_type', s3_key=s3_key)
         return _error(400, 'Unsupported or corrupt file content', job_id)
+
+    log.info('file_type_detected', content_type=content_type)
 
     # ── Convert to image data URLs ──────────────────────────────────────────
     if content_type == 'application/pdf':
@@ -125,7 +181,10 @@ def handler(event: dict, _context: Any) -> dict:
         image_data_urls = [url] if url else []
 
     if not image_data_urls:
+        log.error('image_conversion_failed', content_type=content_type)
         return _error(400, 'Could not extract image data from file', job_id)
+
+    log.info('images_prepared', count=len(image_data_urls))
 
     # ── Build LM Studio request ─────────────────────────────────────────────
     content: list[dict] = [
@@ -141,72 +200,146 @@ def handler(event: dict, _context: Any) -> dict:
         analysis_text = f'{analysis_text}\n\n{lang_instr}'
     content.append({'type': 'text', 'text': analysis_text})
 
-    # ── Call LM Studio ──────────────────────────────────────────────────────
-    try:
-        client, model_name = get_openai_client(timeout=580.0)
-        logger.info('Calling LM Studio model=%s job=%s', model_name, job_id)
-
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {'role': 'system', 'content': SYSTEM_PROMPT},
-                {'role': 'user',   'content': content},
-            ],
-            max_tokens=MAX_TOKENS,
-            temperature=0.6,
-        )
-    except Exception as e:
-        logger.error('LM Studio inference failed job=%s: %s\n%s', job_id, e, traceback.format_exc())
-        return _error(502, f'LM Studio inference failed: {e}', job_id)
+    # ── Call inference provider ─────────────────────────────────────────────
+    if provider == 'ondemand':
+        try:
+            with log.timed('inference', provider='ondemand') as ctx:
+                ondemand_resp = invoke_ondemand(
+                    image_data_urls=image_data_urls,
+                    system_prompt=SYSTEM_PROMPT,
+                    analysis_text=analysis_text,
+                    max_tokens=MAX_TOKENS,
+                    temperature=0.6,
+                )
+                raw_content   = ondemand_resp['raw_text']
+                finish_reason = ondemand_resp['finish_reason']
+                model_name    = ondemand_resp['model_id']
+                provider_name = ondemand_resp['provider']
+                usage_stats   = ondemand_resp.get('usage', {})
+                ctx['model'] = model_name
+                ctx['input_tokens'] = usage_stats.get('input_tokens', 0)
+                ctx['output_tokens'] = usage_stats.get('output_tokens', 0)
+                ctx['finish_reason'] = finish_reason
+        except Exception as e:
+            log.exception('inference_failed', exc=e, provider='ondemand')
+            return _error(502, f'Bedrock On-Demand inference failed: {e}', job_id)
+    elif provider == 'bedrock':
+        try:
+            with log.timed('inference', provider='bedrock-cmi') as ctx:
+                bedrock_resp = invoke_bedrock(
+                    image_data_urls=image_data_urls,
+                    system_prompt=SYSTEM_PROMPT,
+                    analysis_text=analysis_text,
+                    max_tokens=MAX_TOKENS,
+                    temperature=0.6,
+                )
+                raw_content   = bedrock_resp['raw_text']
+                finish_reason = bedrock_resp['finish_reason']
+                model_name    = bedrock_resp['model_arn']
+                provider_name = bedrock_resp['provider']
+                usage_stats   = {}
+                ctx['model'] = model_name
+                ctx['finish_reason'] = finish_reason
+        except Exception as e:
+            log.exception('inference_failed', exc=e, provider='bedrock-cmi')
+            return _error(502, f'Bedrock CMI inference failed: {e}', job_id)
+    else:
+        try:
+            client, model_name = get_openai_client(timeout=580.0)
+            with log.timed('inference', provider='desktop', model=model_name) as ctx:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {'role': 'system', 'content': SYSTEM_PROMPT},
+                        {'role': 'user',   'content': content},
+                    ],
+                    max_tokens=MAX_TOKENS,
+                    temperature=0.6,
+                )
+                raw_content   = response.choices[0].message.content or ''
+                finish_reason = response.choices[0].finish_reason or ''
+                provider_name = 'RTX 5090'
+                usage_stats   = {}
+                ctx['finish_reason'] = finish_reason
+        except Exception as e:
+            log.exception('inference_failed', exc=e, provider='desktop')
+            return _error(502, f'LM Studio inference failed: {e}', job_id)
 
     elapsed_ms = int((time.time() - start) * 1000)
-    raw_content   = response.choices[0].message.content or ''
-    finish_reason = response.choices[0].finish_reason or ''
 
     result = _parse_model_response(raw_content)
+    log.info('response_parsed', has_chain_of_thought=bool(result.get('chain_of_thought')),
+             has_ocr=bool(result.get('ocr_text')))
 
+    # ── Build response body ─────────────────────────────────────────────────
     body = {
         'jobId':                   job_id,
+        'chain_of_thought':        result.get('chain_of_thought', ''),
         'summary':                 result.get('summary', ''),
-        'key_observations':        result.get('key_observations', []),
+        'description':             result.get('description', ''),
+        'insights':                result.get('insights', []),
+        'observations':            result.get('observations', []),
+        'ocr_text':                result.get('ocr_text', ''),
         'content_classification':  result.get('content_classification', ''),
-        'extracted_text':          result.get('extracted_text', ''),
+        # Legacy fields for backward compatibility
+        'key_observations':        result.get('observations', []),
+        'extracted_text':          result.get('ocr_text', ''),
         'processing_time_ms':      elapsed_ms,
         'finish_reason':           finish_reason,
         'mode':                    'fast',
         'model':                   model_name,
-        'provider':                'RTX 5090',
+        'provider':                provider_name,
         'filename':                filename,
+        'usage':                   usage_stats if usage_stats else None,
     }
 
     # ── Persist result alongside the upload (S3) ────────────────────────────
     result_key = re.sub(r'/[^/]+$', '/result.json', s3_key)
     try:
-        s3_client.put_object(
-            Bucket=UPLOAD_BUCKET,
-            Key=result_key,
-            Body=json.dumps(body, ensure_ascii=False).encode('utf-8'),
-            ContentType='application/json',
-        )
+        with log.timed('s3_result_save', key=result_key):
+            s3_client.put_object(
+                Bucket=UPLOAD_BUCKET,
+                Key=result_key,
+                Body=json.dumps(body, ensure_ascii=False).encode('utf-8'),
+                ContentType='application/json',
+            )
         body['resultS3Key'] = result_key
     except Exception as e:
-        logger.warning('Could not save result to S3: %s', e)
+        log.warning('s3_result_save_failed', error=str(e))
 
-    # ── Write COMPLETED to DynamoDB so /api/status/{jobId} resolves ──────────
+    # ── Write COMPLETED to DynamoDB — links upload ↔ result ──────────────────
     if JOBS_TABLE_NAME and job_id != 'unknown':
         try:
-            dynamodb.Table(JOBS_TABLE_NAME).update_item(
-                Key={'jobId': job_id},
-                UpdateExpression='SET #s = :s, completedAt = :ca, #r = :r',
-                ExpressionAttributeNames={'#s': 'status', '#r': 'result'},
-                ExpressionAttributeValues={
-                    ':s': 'COMPLETED',
-                    ':ca': datetime.now(timezone.utc).isoformat(),
-                    ':r': body,
-                },
-            )
+            with log.timed('dynamodb_update'):
+                dynamodb.Table(JOBS_TABLE_NAME).update_item(
+                    Key={'jobId': job_id},
+                    UpdateExpression=(
+                        'SET #s = :s, completedAt = :ca, #r = :r, '
+                        'resultS3Key = :rk, uploadS3Key = :uk, '
+                        'contentType = :ct, fileSizeBytes = :fsb, '
+                        'imageCount = :ic, processingTimeMs = :ptm, '
+                        'modelId = :mid, providerName = :pn'
+                    ),
+                    ExpressionAttributeNames={'#s': 'status', '#r': 'result'},
+                    ExpressionAttributeValues={
+                        ':s': 'COMPLETED',
+                        ':ca': datetime.now(timezone.utc).isoformat(),
+                        ':r': body,
+                        ':rk': result_key,
+                        ':uk': s3_key,
+                        ':ct': content_type,
+                        ':fsb': file_size,
+                        ':ic': len(image_data_urls),
+                        ':ptm': elapsed_ms,
+                        ':mid': model_name,
+                        ':pn': provider_name,
+                    },
+                )
         except Exception as e:
-            logger.warning('Could not update DynamoDB with result: %s', e)
+            log.warning('dynamodb_update_failed', error=str(e))
+
+    log.info('orchestrator_complete', elapsed_ms=elapsed_ms, provider=provider_name,
+             model=model_name, finish_reason=finish_reason)
 
     return {'statusCode': 200, 'headers': HEADERS, 'body': json.dumps(body, ensure_ascii=False)}
 
@@ -214,30 +347,16 @@ def handler(event: dict, _context: Any) -> dict:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _detect_magic_type(raw: bytes, s3_key: str) -> str:
-    """Identify file type from magic bytes, with s3_key extension as fallback.
-
-    Why magic bytes instead of trusting the Content-Type header?
-      The presign Lambda already validates the content-type, but that check
-      happens before the file is uploaded.  A crafted PUT request could upload
-      a file with a mismatched body.  Reading the first 12 bytes here catches
-      that and prevents the orchestrator from passing garbage to PIL/pdf2image.
-
-    Returns an IANA media type string, or '' if the file is unrecognised.
-    """
+    """Identify file type from magic bytes, with s3_key extension as fallback."""
     if len(raw) < 12:
         return ''
-    # Magic bytes for each supported format:
     if raw.startswith(b'%PDF-'):                   return 'application/pdf'
     if raw.startswith(b'\xFF\xD8\xFF'):            return 'image/jpeg'
     if raw.startswith(b'\x89PNG\r\n\x1a\n'):      return 'image/png'
     if raw.startswith(b'GIF87a') or raw.startswith(b'GIF89a'): return 'image/gif'
     if raw.startswith(b'BM'):                      return 'image/bmp'
-    # RIFF WEBP: bytes 0-3 = 'RIFF', bytes 8-11 = 'WEBP'
     if raw[:4] == b'RIFF' and raw[8:12] == b'WEBP': return 'image/webp'
-    # TIFF: little-endian ('II') or big-endian ('MM') marker
     if raw.startswith((b'II*\x00', b'MM\x00*')):  return 'image/tiff'
-    # Fall back to extension when magic bytes are inconclusive (e.g. a truncated
-    # test file or an unusual TIFF variant).
     ext = s3_key.rsplit('.', 1)[-1].lower() if '.' in s3_key else ''
     return {
         'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
@@ -247,54 +366,21 @@ def _detect_magic_type(raw: bytes, s3_key: str) -> str:
 
 
 def _image_to_data_url(raw_bytes: bytes) -> str | None:
-    """Decode the image bytes with PIL and re-encode as a base64 PNG data-URL.
-
-    Why re-encode to PNG instead of passing the original bytes?
-      LM Studio (and the underlying model) expects a well-formed image.  PIL
-      open-and-save handles edge cases that the raw bytes may have:
-        - EXIF rotation metadata (PIL applies it on load)
-        - Palette-mode PNGs ('P') and RGBA with alpha that confuse some models
-        - Unusual TIFF compression variants
-        - Badly-padded JPEG headers
-      Normalising to RGB PNG removes all of those surprises at the cost of
-      a small (~2×) size increase, which is always within the LM Studio limit.
-    """
+    """Decode the image bytes with PIL and re-encode as a base64 PNG data-URL."""
     try:
         img = Image.open(io.BytesIO(raw_bytes))
-        # RGBA and palette modes can't be saved as plain JPEG; converting to
-        # RGB first makes the subsequent PNG save lossless and universally safe.
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         return 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
     except Exception as e:
-        logger.error('Image conversion error: %s', e)
+        log.error('image_conversion_error', error=str(e))
         return None
 
 
 def _pdf_to_data_urls(pdf_bytes: bytes, job_id: str) -> list[str]:
-    """Render each PDF page to a PNG data-URL using pypdfium2.
-
-    pypdfium2 bundles the native PDFium binary inside the Python wheel, so
-    no system-level poppler-utils installation is required.  This makes it
-    work in AWS Lambda without a separate Lambda Layer.
-
-    DPI choice (150):
-      - 72 DPI is typical screen resolution; 150 gives 2× more pixels per
-        dimension, making small text legible to the vision model.
-      - Higher DPI (300) produces sharper results for dense documents but
-        increases the base64 payload by 4×, which slows LM Studio and can
-        exceed the model's context window.
-      - 150 is a practical trade-off validated against invoices and medical forms.
-      - scale = DPI / 72 (PDFium's base unit is 72 pts/inch).
-
-    PAGE CAP (MAX_PDF_PAGES):
-      Each page becomes one image in the multimodal request.  LM Studio /
-      the underlying model has a context-length limit.  Capping pages prevents
-      an oversized request that would error at the model level.  The default
-      cap is 20 pages (configurable via MAX_PDF_PAGES env-var).
-    """
+    """Render each PDF page to a PNG data-URL using pypdfium2."""
     try:
         import pypdfium2 as pdfium
         pdf = pdfium.PdfDocument(pdf_bytes)
@@ -306,45 +392,91 @@ def _pdf_to_data_urls(pdf_bytes: bytes, job_id: str) -> list[str]:
             buf = io.BytesIO()
             pil_image.save(buf, format='PNG')
             result.append('data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode())
+        log.info('pdf_converted', pages=len(result), total_pages=len(pdf))
         return result
     except Exception as e:
-        logger.error('PDF conversion error job=%s: %s', job_id, e)
+        log.error('pdf_conversion_error', error=str(e))
         return []
 
 
 def _parse_model_response(text: str) -> dict:
     """Extract the JSON object from the model's raw output.
 
-    The system prompt asks the model to return ONLY a JSON object with no
-    markdown fences.  In practice, smaller models (and even some large ones)
-    sometimes wrap the JSON in a code block:
-
-        ```json
-        { ... }
-        ```
-
-    The regex strips both the opening fence (with optional language tag) and
-    the closing fence.  After stripping, we attempt json.loads.  If that
-    fails (malformed JSON, model hallucinated extra text), we return a minimal
-    fallback dict with the raw text in 'summary' so the UI can still display
-    something useful instead of a blank panel.
+    Handles:
+      - Clean JSON output
+      - JSON wrapped in markdown code fences
+      - Qwen3 VL chain-of-thought output where thinking is outside the JSON
+      - Malformed JSON (returns raw text as summary fallback)
     """
     text = text.strip()
+
+    # Strip markdown code fences if present
     if text.startswith('```'):
         text = re.sub(r'^```(?:json)?\s*\n?', '', text)
         text = re.sub(r'\n?```\s*$', '', text)
+
+    # Try direct JSON parse first
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
     except json.JSONDecodeError:
-        return {
-            'summary': text[:500],
-            'key_observations': [],
-            'content_classification': 'unknown',
-            'extracted_text': 'No text detected.',
-        }
+        pass
+
+    # Try to extract JSON object from mixed text (e.g. thinking + JSON)
+    # Look for the outermost { ... } block
+    brace_start = text.find('{')
+    if brace_start >= 0:
+        # Walk forward to find the matching closing brace
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i in range(brace_start, len(text)):
+            c = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if c == '\\' and in_string:
+                escape_next = True
+                continue
+            if c == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if not in_string:
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        json_str = text[brace_start:i + 1]
+                        try:
+                            parsed = json.loads(json_str)
+                            if isinstance(parsed, dict):
+                                # Capture any text before the JSON as chain_of_thought
+                                # if not already present
+                                preamble = text[:brace_start].strip()
+                                if preamble and 'chain_of_thought' not in parsed:
+                                    parsed['chain_of_thought'] = preamble
+                                return parsed
+                        except json.JSONDecodeError:
+                            break
+                        break
+
+    # Fallback: return raw text so the UI can display something
+    log.warning('json_parse_fallback', raw_length=len(text))
+    return {
+        'chain_of_thought': '',
+        'summary': text[:1000],
+        'description': '',
+        'insights': [],
+        'observations': [],
+        'ocr_text': 'No text detected.',
+        'content_classification': 'unknown',
+    }
 
 
 def _error(status: int, message: str, job_id: str = 'unknown') -> dict:
+    log.error('orchestrator_error', status=status, message=message)
     if JOBS_TABLE_NAME and job_id != 'unknown':
         try:
             dynamodb.Table(JOBS_TABLE_NAME).update_item(

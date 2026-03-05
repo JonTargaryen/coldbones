@@ -1,20 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { UploadedFile, PresignResponse } from '../types';
-
-// When VITE_API_BASE_URL is empty the browser uses the same origin it loaded
-// the page from (i.e. the CloudFront distribution).  CloudFront then routes
-// /api/* to API Gateway via the dedicated behavior added in StorageStack.
-// This is the correct production config.  In local dev, set this to
-// http://localhost:8000 in frontend/.env so the browser hits the FastAPI server.
-const API = import.meta.env.VITE_API_BASE_URL ?? '';
-
-const ALLOWED_TYPES = new Set([
-  'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
-  'image/gif', 'image/bmp', 'image/tiff', 'application/pdf',
-]);
-// 20 MB — matches the Lambda orchestrator's practical limit for base64 encoding
-// (a 20 MB file becomes ~27 MB in base64, which is within LM Studio's context).
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
+import { API_BASE_URL as API, ALLOWED_MIME_TYPES as ALLOWED_TYPES, MAX_FILE_SIZE_BYTES as MAX_FILE_SIZE } from '../config';
 
 /** Convert snake_case API result to camelCase AnalysisResult */
 export function useUpload() {
@@ -62,7 +48,16 @@ export function useUpload() {
     });
   }, []);
 
-  return { files, setFiles, addFiles, removeFile, clearAll };
+  const reorderFiles = useCallback((fromIndex: number, toIndex: number) => {
+    setFiles((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }, []);
+
+  return { files, setFiles, addFiles, removeFile, clearAll, reorderFiles };
 }
 
 async function _uploadToS3(

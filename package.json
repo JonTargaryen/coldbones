@@ -1,0 +1,29 @@
+{
+  "name": "coldbones",
+  "private": true,
+  "description": "ColdBones — visual analysis platform (monorepo root)",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2"
+  },
+  "lint-staged": {
+    "frontend/src/**/*.{ts,tsx}": [
+      "bash -c 'cd frontend && npx tsc --noEmit'"
+    ],
+    "backend/**/*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ],
+    "lambdas/**/*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ],
+    "worker/**/*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ]
+  }
+}

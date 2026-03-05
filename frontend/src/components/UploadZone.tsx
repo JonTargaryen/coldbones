@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { ACCEPT_MAP } from '../utils/validation';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -16,6 +16,28 @@ export function UploadZone({ onFilesAdded, disabled }: UploadZoneProps) {
       onFilesAdded(acceptedFiles);
     }
   }, [onFilesAdded]);
+
+  // ── Clipboard paste (Ctrl+V / Cmd+V) ──────────────────────────────────────
+  useEffect(() => {
+    if (disabled) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files: File[] = [];
+      for (const item of items) {
+        if (item.kind === 'file') {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        onFilesAdded(files);
+      }
+    };
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [disabled, onFilesAdded]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,

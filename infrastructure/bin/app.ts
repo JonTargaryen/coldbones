@@ -74,6 +74,8 @@ const apiStack = new ApiStack(app, 'ColdbonesApi', {
   uploadBucket:  storageStack.uploadBucket,
   jobsTable:     storageStack.jobsTable,
   analysisQueue: queueStack.analysisQueue,
+  userPool:      storageStack.userPool,
+  userPoolClient: storageStack.userPoolClient,
   modelName,
 });
 apiStack.addDependency(storageStack);

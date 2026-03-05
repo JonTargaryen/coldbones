@@ -3,9 +3,12 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cfOrigins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 
 
@@ -44,6 +47,8 @@ export class StorageStack extends cdk.Stack {
   public readonly siteBucket: s3.Bucket;
   public readonly distribution: cloudfront.Distribution;
   public readonly jobsTable: dynamodb.Table;
+  public readonly userPool: cognito.UserPool;
+  public readonly userPoolClient: cognito.UserPoolClient;
   public readonly hostedZone?: route53.HostedZone;
   public readonly certificate?: acm.Certificate;
   /** https://app.omlahiri.com  OR  https://xxxx.cloudfront.net */
@@ -114,8 +119,13 @@ export class StorageStack extends cdk.Stack {
       cors: [
         {
           allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.HEAD],
-          allowedOrigins: ['*'],
-          allowedHeaders: ['*'],
+          allowedOrigins: [
+            'https://app.omlahiri.com',
+            'https://www.omlahiri.com',
+            'https://omlahiri.com',
+            'http://localhost:5173',
+          ],
+          allowedHeaders: ['Content-Type', 'Content-Length', 'x-amz-*'],
           maxAge: 3600,
         },
       ],
@@ -131,6 +141,128 @@ export class StorageStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
+    // ─── CloudFront Security Headers ─────────────────────────────────────
+    const securityHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+      responseHeadersPolicyName: 'coldbones-security-headers',
+      securityHeadersBehavior: {
+        contentSecurityPolicy: {
+          override: true,
+          contentSecurityPolicy: [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' blob: data:",
+            "font-src 'self'",
+            "connect-src 'self' https://*.execute-api.us-east-1.amazonaws.com",
+            "frame-ancestors 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+          ].join('; '),
+        },
+        strictTransportSecurity: {
+          override: true,
+          accessControlMaxAge: cdk.Duration.days(365),
+          includeSubdomains: true,
+          preload: true,
+        },
+        contentTypeOptions: { override: true },
+        frameOptions: { override: true, frameOption: cloudfront.HeadersFrameOption.DENY },
+        xssProtection: { override: true, protection: true, modeBlock: true },
+        referrerPolicy: {
+          override: true,
+          referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+        },
+      },
+      customHeadersBehavior: {
+        customHeaders: [
+          { header: 'Permissions-Policy', override: true, value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+    });
+
+    // ─── WAF v2 Web ACL ───────────────────────────────────────────────────
+    // AWS WAF protects CloudFront from bots, scanners, SQLi, and abuse.
+    // ~$9/mo: $5 base + $1/rule group × 4 rules.
+    const webAcl = new wafv2.CfnWebACL(this, 'WebAcl', {
+      defaultAction: { allow: {} },
+      scope: 'CLOUDFRONT',
+      visibilityConfig: {
+        cloudWatchMetricsEnabled: true,
+        metricName: 'coldbones-waf',
+        sampledRequestsEnabled: true,
+      },
+      rules: [
+        // Rule 1: AWS Core Rule Set — blocks known bad user agents, path traversal, etc.
+        {
+          name: 'AWSManagedRulesCommonRuleSet',
+          priority: 10,
+          overrideAction: { none: {} },
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesCommonRuleSet',
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            metricName: 'core-rules',
+            sampledRequestsEnabled: true,
+          },
+        },
+        // Rule 2: Known bad inputs — blocks request patterns associated with exploitation
+        {
+          name: 'AWSManagedRulesKnownBadInputsRuleSet',
+          priority: 20,
+          overrideAction: { none: {} },
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesKnownBadInputsRuleSet',
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            metricName: 'bad-inputs',
+            sampledRequestsEnabled: true,
+          },
+        },
+        // Rule 3: SQL injection protection
+        {
+          name: 'AWSManagedRulesSQLiRuleSet',
+          priority: 30,
+          overrideAction: { none: {} },
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesSQLiRuleSet',
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            metricName: 'sqli-rules',
+            sampledRequestsEnabled: true,
+          },
+        },
+        // Rule 4: Per-IP rate limiting — 500 requests per 5 minutes per IP
+        {
+          name: 'RateLimitPerIP',
+          priority: 40,
+          action: { block: {} },
+          statement: {
+            rateBasedStatement: {
+              limit: 500,
+              aggregateKeyType: 'IP',
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            metricName: 'rate-limit',
+            sampledRequestsEnabled: true,
+          },
+        },
+      ],
+    });
+
     // ─── CloudFront Distribution ───────────────────────────────────────────
     const oac = new cloudfront.S3OriginAccessControl(this, 'OAC', {
       description: 'Coldbones SPA OAC',
@@ -143,6 +275,7 @@ export class StorageStack extends cdk.Stack {
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        responseHeadersPolicy: securityHeaders,
         compress: true,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
       },
@@ -152,6 +285,7 @@ export class StorageStack extends cdk.Stack {
         { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: cdk.Duration.minutes(0) },
       ],
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      webAclId: webAcl.attrArn,
       ...(appFqdn && cert
         ? { domainNames: [appFqdn, `www.${domainName}`, domainName!], certificate: cert }
         : {}),
@@ -209,6 +343,66 @@ export class StorageStack extends cdk.Stack {
       partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'createdAt', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // ─── Cognito User Pool ─────────────────────────────────────────────────
+    // Provides authentication for the API. Cognito Hosted UI handles sign-up,
+    // sign-in, password reset, and (optionally) MFA. Free tier: 50k MAU.
+    this.userPool = new cognito.UserPool(this, 'UserPool', {
+      userPoolName: 'coldbones-users',
+      selfSignUpEnabled: true,
+      signInAliases: { email: true },
+      autoVerify: { email: true },
+      standardAttributes: {
+        email: { required: true, mutable: true },
+      },
+      passwordPolicy: {
+        minLength: 8,
+        requireUppercase: true,
+        requireLowercase: true,
+        requireDigits: true,
+        requireSymbols: false,
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // App client — used by the SPA for OAuth2 PKCE flow (no client secret).
+    const callbackUrls = appFqdn
+      ? [`https://${appFqdn}/callback`, `https://www.${domainName}/callback`, `https://${domainName}/callback`, 'http://localhost:5173/callback']
+      : ['http://localhost:5173/callback'];
+    const logoutUrls = appFqdn
+      ? [`https://${appFqdn}`, `https://www.${domainName}`, `https://${domainName}`, 'http://localhost:5173']
+      : ['http://localhost:5173'];
+
+    this.userPoolClient = this.userPool.addClient('SpaClient', {
+      userPoolClientName: 'coldbones-spa',
+      generateSecret: false,
+      authFlows: {
+        userSrp: true,
+      },
+      oAuth: {
+        flows: { authorizationCodeGrant: true },
+        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
+        callbackUrls,
+        logoutUrls,
+      },
+      preventUserExistenceErrors: true,
+      accessTokenValidity: cdk.Duration.hours(1),
+      idTokenValidity: cdk.Duration.hours(1),
+      refreshTokenValidity: cdk.Duration.days(30),
+    });
+
+    // Cognito Hosted UI domain
+    this.userPool.addDomain('CognitoDomain', {
+      cognitoDomain: { domainPrefix: 'coldbones' },
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolId', { value: this.userPool.userPoolId, exportName: 'ColdbonesUserPoolId' });
+    new cdk.CfnOutput(this, 'UserPoolClientId', { value: this.userPoolClient.userPoolClientId, exportName: 'ColdbonesUserPoolClientId' });
+    new cdk.CfnOutput(this, 'CognitoDomain', {
+      value: `coldbones.auth.${this.region}.amazoncognito.com`,
+      exportName: 'ColdbonesCognitoDomain',
     });
 
     // ─── CloudFront → API Gateway behavior (/api/*) ───────────────────────
