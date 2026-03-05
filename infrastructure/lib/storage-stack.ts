@@ -150,10 +150,10 @@ export class StorageStack extends cdk.Stack {
           contentSecurityPolicy: [
             "default-src 'self'",
             "script-src 'self'",
-            "style-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "img-src 'self' blob: data:",
-            "font-src 'self'",
-            "connect-src 'self' https://*.execute-api.us-east-1.amazonaws.com",
+            "font-src 'self' https://fonts.gstatic.com",
+            "connect-src 'self' https://*.execute-api.us-east-1.amazonaws.com https://*.s3.amazonaws.com https://*.s3.us-east-1.amazonaws.com",
             "frame-ancestors 'none'",
             "base-uri 'self'",
             "form-action 'self'",
