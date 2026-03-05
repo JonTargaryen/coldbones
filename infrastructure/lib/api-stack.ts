@@ -9,8 +9,6 @@ import * as sns_subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as synthetics from 'aws-cdk-lib/aws-synthetics';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
-import * as authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
-import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
@@ -23,10 +21,6 @@ export interface ApiStackProps extends cdk.StackProps {
   uploadBucket: s3.IBucket;
   jobsTable: dynamodb.ITable;
   analysisQueue: sqs.IQueue;
-
-  // Cognito
-  userPool: cognito.IUserPool;
-  userPoolClient: cognito.IUserPoolClient;
 
   // Desktop SSM params (Tailscale Funnel URL)
   desktopUrlParamName?: string;   // default: /coldbones/desktop-url
@@ -348,14 +342,7 @@ export class ApiStack extends cdk.Stack {
     // old REST API proxy format (event.body, event.pathParameters, etc.) so
     // no handler code changes are needed.
 
-    // Cognito JWT Authorizer — validates the Authorization: Bearer <token>
-    // header against the Cognito User Pool. Only /api/health is public.
-    const jwtAuthorizer = new authorizers.HttpJwtAuthorizer('CognitoJwt', `https://cognito-idp.${this.region}.amazonaws.com/${props.userPool.userPoolId}`, {
-      jwtAudience: [props.userPoolClient.userPoolClientId],
-      identitySource: ['$request.header.Authorization'],
-    });
-
-    // Health: PUBLIC (no auth) — used by monitoring and the initial health check
+    // Health: used by monitoring and the initial health check
     this.httpApi.addRoutes({
       path:        '/api/health',
       methods:     [apigwv2.HttpMethod.GET],
@@ -364,17 +351,16 @@ export class ApiStack extends cdk.Stack {
       }),
     });
 
-    // Presign: AUTHENTICATED
+    // Presign
     this.httpApi.addRoutes({
       path:        '/api/presign',
       methods:     [apigwv2.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration('PresignInteg', presignedUrlFn, {
         payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_1_0,
       }),
-      authorizer: jwtAuthorizer,
     });
 
-    // Analyze: AUTHENTICATED
+    // Analyze
     this.httpApi.addRoutes({
       path:        '/api/analyze',
       methods:     [apigwv2.HttpMethod.POST],
@@ -384,17 +370,15 @@ export class ApiStack extends cdk.Stack {
         // the old REST API LambdaIntegration timeout of 29 s.
         timeout: cdk.Duration.seconds(29),
       }),
-      authorizer: jwtAuthorizer,
     });
 
-    // Status: AUTHENTICATED
+    // Status
     this.httpApi.addRoutes({
       path:        '/api/status/{jobId}',
       methods:     [apigwv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('StatusInteg', jobStatusFn, {
         payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_1_0,
       }),
-      authorizer: jwtAuthorizer,
     });
 
     // ─── Tags for cost allocation ──────────────────────────────────────────

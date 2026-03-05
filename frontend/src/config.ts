@@ -12,11 +12,6 @@
 // ── API ─────────────────────────────────────────────────────────────────────
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '';
 
-// ── AWS Cognito ─────────────────────────────────────────────────────────────
-export const COGNITO_USER_POOL_ID: string = import.meta.env.VITE_COGNITO_USER_POOL_ID ?? '';
-export const COGNITO_CLIENT_ID: string    = import.meta.env.VITE_COGNITO_CLIENT_ID ?? '';
-export const COGNITO_DOMAIN: string       = import.meta.env.VITE_COGNITO_DOMAIN ?? '';
-
 // ── Upload limits ───────────────────────────────────────────────────────────
 export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
 

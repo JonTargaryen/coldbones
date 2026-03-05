@@ -31,7 +31,9 @@ export function ProviderPicker({ disabled = false, health }: ProviderPickerProps
     if (value === 'auto') return '';
     const providerStatus = health?.providers?.[value as 'local' | 'cloud'];
     if (!providerStatus) return 'unknown';
-    return providerStatus.status === 'configured' ? 'online' : 'offline';
+    if (providerStatus.status === 'configured') return 'online';
+    if (providerStatus.status === 'unknown') return 'unknown';
+    return 'offline';
   };
 
   return (

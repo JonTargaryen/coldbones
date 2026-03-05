@@ -87,6 +87,11 @@ MAX_IMAGE_DIMENSION = int(os.environ.get('MAX_IMAGE_DIMENSION', 1568))
 JPEG_QUALITY        = int(os.environ.get('JPEG_QUALITY', 85))
 MAX_VIDEO_FRAMES    = int(os.environ.get('MAX_VIDEO_FRAMES', 20))
 
+# Qwen3 VL on Bedrock rejects payloads above ~6 MB of image data with:
+#   "Failed to buffer the request body: length limit exceeded"
+# Target 5 MB to stay safely under the model's internal limit.
+MAX_PAYLOAD_BYTES   = int(os.environ.get('MAX_PAYLOAD_BYTES', 5 * 1024 * 1024))
+
 HEADERS = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -194,6 +199,11 @@ def handler(event: dict, _context: Any) -> dict:
     if not image_data_urls:
         log.error('image_conversion_failed', content_type=content_type)
         return _error(400, 'Could not extract image data from file', job_id)
+
+    # ── Cap total payload size ──────────────────────────────────────────────
+    # Bedrock Converse has a 25 MB request limit. If the combined images
+    # exceed MAX_PAYLOAD_BYTES, progressively drop trailing pages/frames.
+    image_data_urls = _cap_payload_size(image_data_urls)
 
     log.info('images_prepared', count=len(image_data_urls))
 
@@ -404,6 +414,73 @@ def _detect_magic_type(raw: bytes, s3_key: str) -> str:
         'mp4': 'video/mp4', 'mov': 'video/mp4', 'webm': 'video/webm',
         'avi': 'video/avi', 'mkv': 'video/webm',
     }.get(ext, '')
+
+
+def _estimate_decoded_size(data_url: str) -> int:
+    """Estimate the decoded byte size of a base64 data URL.
+
+    The Converse API sends the raw bytes (not base64) over the wire, so
+    the actual payload per image is ~75% of the base64 string length.
+    """
+    if ';base64,' in data_url:
+        b64_part = data_url.split(';base64,', 1)[1]
+        return len(b64_part) * 3 // 4
+    return len(data_url)
+
+
+def _cap_payload_size(data_urls: list[str]) -> list[str]:
+    """Ensure total image payload fits within MAX_PAYLOAD_BYTES.
+
+    Strategy (in order):
+      1. Re-compress each image at progressively lower JPEG quality.
+      2. If still too large, drop trailing pages/frames.
+    """
+    total = sum(_estimate_decoded_size(u) for u in data_urls)
+    if total <= MAX_PAYLOAD_BYTES:
+        return data_urls
+
+    log.warning('payload_too_large', total_bytes=total,
+                limit_bytes=MAX_PAYLOAD_BYTES, image_count=len(data_urls))
+
+    # Step 1: Re-compress at lower quality + smaller dimensions
+    reduced_dim = 1024
+    reduced_quality = 60
+    recompressed: list[str] = []
+    for url in data_urls:
+        if ';base64,' in url:
+            header, b64 = url.split(';base64,', 1)
+            try:
+                img = Image.open(io.BytesIO(base64.b64decode(b64)))
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                w, h = img.size
+                if max(w, h) > reduced_dim:
+                    scale = reduced_dim / max(w, h)
+                    img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=reduced_quality, optimize=True)
+                recompressed.append('data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode())
+            except Exception:
+                recompressed.append(url)  # keep original if re-compress fails
+        else:
+            recompressed.append(url)
+
+    total = sum(_estimate_decoded_size(u) for u in recompressed)
+    log.info('payload_recompressed', total_bytes=total, image_count=len(recompressed),
+             dim=reduced_dim, quality=reduced_quality)
+
+    if total <= MAX_PAYLOAD_BYTES:
+        return recompressed
+
+    # Step 2: Still too large — drop trailing pages
+    capped = list(recompressed)
+    while len(capped) > 1 and total > MAX_PAYLOAD_BYTES:
+        removed = capped.pop()
+        total -= _estimate_decoded_size(removed)
+
+    log.info('payload_capped', kept=len(capped),
+             dropped=len(data_urls) - len(capped), final_bytes=total)
+    return capped
 
 
 def _compress_image(pil_img: Image.Image) -> str | None:
