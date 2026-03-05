@@ -67,6 +67,7 @@ function ScrollBox({ children, className }: { children: React.ReactNode; classNa
 
 export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, elapsedMs, estimateMs }: AnalysisPanelProps) {
   const [cotOpen, setCotOpen] = useState(false);
+  const [fullResponseOpen, setFullResponseOpen] = useState(false);
   const { t } = useLanguage();
   const ocrCopy = useCopyToClipboard();
 
@@ -93,6 +94,9 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
           )}
         </p>
         <p className="analysis-thinking-hint">{t.thinkingHint}</p>
+        <div className="analysis-progress-bar" aria-hidden="true">
+          <div className="analysis-progress-fill" />
+        </div>
       </div>
     );
   }
@@ -113,8 +117,43 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
   const hasOcr = result.ocrText && result.ocrText !== 'No text detected.' && result.ocrText.length > 0;
   const hasDescription = result.description && result.description.length > 0;
 
+  // Build the full raw response for the collapsible viewer
+  const fullResponseParts: string[] = [];
+  if (result.summary) fullResponseParts.push(`## Summary\n\n${result.summary}`);
+  if (hasDescription) fullResponseParts.push(`## Description\n\n${result.description}`);
+  if (hasInsights) fullResponseParts.push(`## Insights\n\n${result.insights.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}`);
+  if (hasObservations) fullResponseParts.push(`## Observations\n\n${result.observations.map((o, idx) => `${idx + 1}. ${o}`).join('\n')}`);
+  if (hasOcr) fullResponseParts.push(`## Extracted Text (OCR)\n\n\`\`\`\n${result.ocrText}\n\`\`\``);
+  if (hasCoT) fullResponseParts.push(`## Chain of Thought\n\n${result.chainOfThought}`);
+  const fullResponse = fullResponseParts.join('\n\n---\n\n');
+
   return (
     <div className="analysis-panel has-result" role="region" aria-label={t.summary}>
+
+      {/* ── Full Model Response — collapsible, closed by default ── */}
+      <div className="result-section full-response-section">
+        <button
+          className="full-response-toggle"
+          onClick={() => setFullResponseOpen(!fullResponseOpen)}
+          aria-expanded={fullResponseOpen}
+          aria-controls="full-response-content"
+        >
+          <span className={`full-response-toggle-icon ${fullResponseOpen ? 'open' : ''}`} aria-hidden="true">▶</span>
+          <h3>
+            Full Model Response
+            <span className="full-response-meta">
+              {fullResponse.length.toLocaleString()} chars
+            </span>
+          </h3>
+        </button>
+        {fullResponseOpen && (
+          <ScrollBox className="full-response-content">
+            <div className="markdown-body" id="full-response-content" tabIndex={0}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{fullResponse}</ReactMarkdown>
+            </div>
+          </ScrollBox>
+        )}
+      </div>
 
       {/* ── Summary ── */}
       <div className="result-section summary-section">
@@ -133,7 +172,7 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
             aria-expanded={cotOpen}
             aria-controls="cot-content"
           >
-            <span className="cot-toggle-icon" aria-hidden="true">{cotOpen ? '▼' : '▶'}</span>
+            <span className={`cot-toggle-icon ${cotOpen ? 'open' : ''}`} aria-hidden="true">▶</span>
             <h3>
               Chain of Thought
               <span className="cot-meta">

@@ -7,6 +7,14 @@ const ACCEPTED_IMAGE_TYPES = [
   'image/tiff',
 ];
 
+const ACCEPTED_VIDEO_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+];
+
 const ACCEPTED_PDF_TYPE = 'application/pdf';
 
 const MAX_FILE_SIZE_MB = 20;
@@ -21,11 +29,17 @@ export interface ValidationError {
 }
 
 export function isAcceptedType(file: File): boolean {
-  return ACCEPTED_IMAGE_TYPES.includes(file.type) || file.type === ACCEPTED_PDF_TYPE;
+  return ACCEPTED_IMAGE_TYPES.includes(file.type)
+    || ACCEPTED_VIDEO_TYPES.includes(file.type)
+    || file.type === ACCEPTED_PDF_TYPE;
 }
 
 export function isImage(file: File): boolean {
   return ACCEPTED_IMAGE_TYPES.includes(file.type);
+}
+
+export function isVideo(file: File): boolean {
+  return ACCEPTED_VIDEO_TYPES.includes(file.type);
 }
 
 export function isPdf(file: File): boolean {
@@ -34,7 +48,7 @@ export function isPdf(file: File): boolean {
 
 export function validateFile(file: File): string | null {
   if (!isAcceptedType(file)) {
-    return `Unsupported file type "${file.type || 'unknown'}". Accepted: JPEG, PNG, WebP, GIF, BMP, TIFF, PDF.`;
+    return `Unsupported file type "${file.type || 'unknown'}". Accepted: JPEG, PNG, WebP, GIF, BMP, TIFF, PDF, MP4, WebM, MOV.`;
   }
   if (file.size > MAX_FILE_SIZE_BYTES) {
     return `File exceeds ${MAX_FILE_SIZE_MB} MB limit (${(file.size / 1024 / 1024).toFixed(1)} MB).`;
@@ -108,4 +122,9 @@ export const ACCEPT_MAP: Record<string, string[]> = {
   'image/bmp': ['.bmp'],
   'image/tiff': ['.tif', '.tiff'],
   'application/pdf': ['.pdf'],
+  'video/mp4': ['.mp4'],
+  'video/webm': ['.webm'],
+  'video/quicktime': ['.mov'],
+  'video/x-msvideo': ['.avi'],
+  'video/x-matroska': ['.mkv'],
 };

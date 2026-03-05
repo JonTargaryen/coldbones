@@ -57,6 +57,8 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp",
     "image/gif", "image/bmp", "image/tiff", "application/pdf",
+    "video/mp4", "video/webm", "video/quicktime",
+    "video/x-msvideo", "video/x-matroska",
 }
 
 

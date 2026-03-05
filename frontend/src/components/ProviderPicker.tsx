@@ -1,8 +1,9 @@
 import { useProvider } from '../contexts/ProviderContext';
-import type { InferenceProvider } from '../types';
+import type { InferenceProvider, HealthResponse } from '../types';
 
 interface ProviderPickerProps {
   disabled?: boolean;
+  health?: HealthResponse | null;
 }
 
 const PROVIDERS: { value: InferenceProvider; label: string; title: string }[] = [
@@ -23,8 +24,15 @@ const PROVIDERS: { value: InferenceProvider; label: string; title: string }[] = 
   },
 ];
 
-export function ProviderPicker({ disabled = false }: ProviderPickerProps) {
+export function ProviderPicker({ disabled = false, health }: ProviderPickerProps) {
   const { provider, setProvider } = useProvider();
+
+  const getStatusClass = (value: InferenceProvider): string => {
+    if (value === 'auto') return '';
+    const providerStatus = health?.providers?.[value as 'local' | 'cloud'];
+    if (!providerStatus) return 'unknown';
+    return providerStatus.status === 'configured' ? 'online' : 'offline';
+  };
 
   return (
     <div
@@ -60,6 +68,9 @@ export function ProviderPicker({ disabled = false }: ProviderPickerProps) {
             )}
           </span>
           <span className="provider-label">{p.label}</span>
+          {p.value !== 'auto' && (
+            <span className={`provider-status-dot ${getStatusClass(p.value)}`} aria-label={`${p.label} ${getStatusClass(p.value)}`} />
+          )}
         </button>
       ))}
     </div>

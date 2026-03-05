@@ -152,7 +152,7 @@ class TestAnalyzeInput:
         resp = client.post(
             "/api/analyze",
             data={"mode": "fast", "lang": "en"},
-            files={"file": ("test.mp4", b"\x00\x00\x00\x00", "video/mp4")},
+            files={"file": ("test.exe", b"\x00\x00\x00\x00", "application/x-msdownload")},
         )
         assert resp.status_code == 400
         assert "Unsupported" in resp.json()["detail"]
@@ -496,7 +496,7 @@ class TestImageToDataUrl:
     def test_returns_data_url_for_valid_image(self):
         url = _image_to_data_url(_png_bytes())
         assert url is not None
-        assert url.startswith("data:image/png;base64,")
+        assert url.startswith("data:image/jpeg;base64,")
 
     def test_rgba_converted_to_rgb(self):
         url = _image_to_data_url(_rgba_png_bytes())
@@ -520,7 +520,7 @@ class TestPdfToDataUrls:
         with patch("pdf2image.convert_from_bytes", return_value=[fake_page]):
             result = _pdf_to_data_urls(b"%PDF-1.4")
         assert len(result) == 1
-        assert result[0].startswith("data:image/png;base64,")
+        assert result[0].startswith("data:image/jpeg;base64,")
 
     def test_limits_to_max_pages(self):
         fake_pages = [Image.new("RGB", (4, 4)) for _ in range(30)]

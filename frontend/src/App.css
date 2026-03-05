@@ -3,7 +3,7 @@
    Primary: Google Blue (#8AB4F8 dark-adapted)
    Font: Roboto
    ────────────────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -387,6 +387,15 @@ body {
 .provider-icon { width: 16px; height: 16px; flex-shrink: 0; }
 .provider-label { white-space: nowrap; }
 
+/* Provider status dots */
+.provider-status-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.provider-status-dot.online  { background: var(--md-success); box-shadow: 0 0 5px var(--md-success); }
+.provider-status-dot.offline { background: var(--md-error); box-shadow: 0 0 5px var(--md-error); }
+.provider-status-dot.unknown { background: var(--md-outline); }
+
 /* ══════════════════════════════════════════════
    ══ UPLOAD ZONE
    ══════════════════════════════════════════════ */
@@ -529,7 +538,8 @@ body {
   color: var(--md-on-surface); min-height: var(--min-touch);
 }
 .cot-toggle h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 0; color: var(--md-primary); }
-.cot-toggle-icon { font-size: 0.6rem; color: var(--md-primary); flex-shrink: 0; }
+.cot-toggle-icon { font-size: 0.6rem; color: var(--md-primary); flex-shrink: 0; transition: transform 0.2s ease; }
+.cot-toggle-icon.open { transform: rotate(90deg); }
 .cot-meta {
   font-size: 0.7rem; font-weight: 400; color: var(--md-outline);
   text-transform: none; letter-spacing: 0;
@@ -543,6 +553,101 @@ body {
   max-height: 500px;
   overflow-y: auto;
   scroll-behavior: smooth;
+  animation: section-expand 0.25s ease-out;
+}
+
+/* ══════════════════════════════════════════════
+   ══ FULL MODEL RESPONSE — collapsible, JetBrains Mono
+   ══════════════════════════════════════════════ */
+.full-response-section { border-color: rgba(173,198,255,0.25); background: rgba(173,198,255,0.04); }
+.full-response-toggle {
+  display: flex; align-items: center; gap: 10px;
+  background: none; border: none; cursor: pointer;
+  padding: 0; width: 100%; text-align: left;
+  color: var(--md-on-surface); min-height: var(--min-touch);
+}
+.full-response-toggle h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 0; color: var(--md-secondary); }
+.full-response-toggle-icon { font-size: 0.6rem; color: var(--md-secondary); flex-shrink: 0; transition: transform 0.2s ease; }
+.full-response-toggle-icon.open { transform: rotate(90deg); }
+.full-response-meta {
+  font-size: 0.7rem; font-weight: 400; color: var(--md-outline);
+  text-transform: none; letter-spacing: 0;
+}
+.full-response-content {
+  margin-top: 12px;
+  background: var(--md-surface-container);
+  border: 1px solid var(--md-outline-variant);
+  padding: 20px;
+  border-radius: var(--md-shape-md);
+  max-height: 600px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  animation: section-expand 0.25s ease-out;
+}
+.full-response-content .markdown-body {
+  font-family: 'JetBrains Mono', 'Roboto Mono', 'SF Mono', monospace;
+  font-size: 0.82rem;
+  line-height: 1.75;
+  letter-spacing: -0.01em;
+}
+.full-response-content .markdown-body code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78em;
+}
+.full-response-content .markdown-body pre code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+}
+
+/* ══════════════════════════════════════════════
+   ══ SECTION EXPAND ANIMATION
+   ══════════════════════════════════════════════ */
+@keyframes section-expand {
+  from { opacity: 0; max-height: 0; transform: translateY(-8px); }
+  to   { opacity: 1; max-height: 600px; transform: translateY(0); }
+}
+
+/* ══════════════════════════════════════════════
+   ══ ANALYSIS PROGRESS BAR
+   ══════════════════════════════════════════════ */
+.analysis-progress-bar {
+  width: 200px; height: 4px;
+  background: var(--md-surface-container-high);
+  border-radius: var(--md-shape-full);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.analysis-progress-fill {
+  height: 100%; width: 40%;
+  background: linear-gradient(90deg, var(--md-primary), var(--md-secondary));
+  border-radius: var(--md-shape-full);
+  animation: progress-shimmer 2s ease-in-out infinite;
+}
+@keyframes progress-shimmer {
+  0%   { transform: translateX(-100%); width: 40%; }
+  50%  { width: 60%; }
+  100% { transform: translateX(350%); width: 40%; }
+}
+
+/* ══════════════════════════════════════════════
+   ══ KEYBOARD SHORTCUT HINT
+   ══════════════════════════════════════════════ */
+.kbd-hint {
+  font-size: 0.7rem;
+  color: var(--md-outline);
+  margin-top: 4px;
+}
+.kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--md-surface-container-high);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-xs);
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--md-on-surface-variant);
+  margin: 0 2px;
+  line-height: 1.6;
 }
 
 /* ══════════════════════════════════════════════

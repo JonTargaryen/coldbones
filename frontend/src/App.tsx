@@ -148,6 +148,18 @@ export default function App() {
     }
   };
 
+  // Keyboard shortcut: Ctrl/Cmd + Enter to analyze
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (canAnalyze) handleAnalyze();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }); // intentionally no deps — uses latest canAnalyze & handleAnalyze
+
   // Count files ready to analyze
   const uploadedCount = files.filter((f) => f.status === 'uploaded').length;
 
@@ -162,7 +174,7 @@ export default function App() {
         <div className="header-right">
           <LanguagePicker />
           <ModeToggle disabled={isBusy} />
-          <ProviderPicker disabled={isBusy} />
+          <ProviderPicker disabled={isBusy} health={health} />
           <div className="health-indicator">
             {health?.model_loaded ? (
               <span
@@ -241,6 +253,13 @@ export default function App() {
                   : selectedFile?.status === 'complete'
                   ? 'Analysis complete'
                   : null}
+              </p>
+            )}
+
+            {/* Keyboard shortcut hint */}
+            {canAnalyze && (
+              <p className="kbd-hint">
+                <span className="kbd">⌘</span>+<span className="kbd">↵</span> to analyze
               </p>
             )}
 

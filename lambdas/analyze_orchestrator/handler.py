@@ -78,6 +78,15 @@ JOBS_TABLE_NAME  = os.environ.get('JOBS_TABLE', '')
 MAX_TOKENS       = int(os.environ.get('MAX_INFERENCE_TOKENS', 16384))
 MAX_PDF_PAGES    = int(os.environ.get('MAX_PDF_PAGES', 20))
 
+# ── Image compression settings ──────────────────────────────────────────────
+# Qwen3 VL processes images in tile grids.  Sending images larger than ~1568px
+# on the longest side wastes vision tokens without improving quality.  Resizing
+# and JPEG-compressing all images before inference dramatically reduces token
+# cost (often 4-10x) with negligible quality loss for analysis.
+MAX_IMAGE_DIMENSION = int(os.environ.get('MAX_IMAGE_DIMENSION', 1568))
+JPEG_QUALITY        = int(os.environ.get('JPEG_QUALITY', 85))
+MAX_VIDEO_FRAMES    = int(os.environ.get('MAX_VIDEO_FRAMES', 20))
+
 HEADERS = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -119,7 +128,7 @@ Respond with a JSON object (no markdown fences, no extra text outside the JSON) 
     "Further observations as needed."
   ],
   "ocr_text": "If there is readable text in the image, transcribe it accurately and completely, preserving formatting (line breaks, spacing, structure) as much as possible. If no text is present, write: No text detected.",
-  "content_classification": "One of: photograph, screenshot, chart/graph, diagram, invoice/receipt, form/document, handwriting, artwork, map, medical image, technical drawing, UI/wireframe, meme, social media post, or other (specify)."
+  "content_classification": "One of: photograph, screenshot, chart/graph, diagram, invoice/receipt, form/document, handwriting, artwork, map, medical image, technical drawing, UI/wireframe, meme, social media post, video, or other (specify)."
 }
 
 ## Guidelines
@@ -176,6 +185,8 @@ def handler(event: dict, _context: Any) -> dict:
     # ── Convert to image data URLs ──────────────────────────────────────────
     if content_type == 'application/pdf':
         image_data_urls = _pdf_to_data_urls(file_bytes, job_id)
+    elif content_type.startswith('video/'):
+        image_data_urls = _video_to_data_urls(file_bytes, job_id)
     else:
         url = _image_to_data_url(file_bytes)
         image_data_urls = [url] if url else []
@@ -190,11 +201,23 @@ def handler(event: dict, _context: Any) -> dict:
     content: list[dict] = [
         {'type': 'image_url', 'image_url': {'url': u}} for u in image_data_urls
     ]
-    analysis_text = (
-        'Analyze this image thoroughly.'
-        if len(image_data_urls) == 1
-        else f'Analyze these {len(image_data_urls)} pages thoroughly. Provide a holistic analysis.'
-    )
+    is_video = content_type.startswith('video/')
+    is_pdf = content_type == 'application/pdf'
+    if len(image_data_urls) == 1:
+        analysis_text = 'Analyze this image thoroughly.'
+    elif is_video:
+        analysis_text = (
+            f'These {len(image_data_urls)} frames were extracted from a video. '
+            'Analyze the video content holistically — describe the scene, actions, '
+            'changes across frames, and any text visible.'
+        )
+    elif is_pdf:
+        analysis_text = (
+            f'Analyze these {len(image_data_urls)} pages thoroughly. '
+            'Provide a holistic analysis.'
+        )
+    else:
+        analysis_text = f'Analyze these {len(image_data_urls)} images thoroughly.'
     lang_instr = LANGUAGE_INSTRUCTIONS.get(lang, '')
     if lang_instr:
         analysis_text = f'{analysis_text}\n\n{lang_instr}'
@@ -357,30 +380,63 @@ def _detect_magic_type(raw: bytes, s3_key: str) -> str:
     if raw.startswith(b'BM'):                      return 'image/bmp'
     if raw[:4] == b'RIFF' and raw[8:12] == b'WEBP': return 'image/webp'
     if raw.startswith((b'II*\x00', b'MM\x00*')):  return 'image/tiff'
+    # Video formats — check container magic bytes
+    if len(raw) >= 12 and raw[4:8] == b'ftyp':     return 'video/mp4'   # MP4/MOV
+    if raw.startswith(b'\x1a\x45\xdf\xa3'):        return 'video/webm'  # WebM/MKV (EBML)
+    if raw[:4] == b'RIFF' and raw[8:12] == b'AVI ': return 'video/avi'
     ext = s3_key.rsplit('.', 1)[-1].lower() if '.' in s3_key else ''
     return {
         'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
         'webp': 'image/webp', 'gif': 'image/gif', 'bmp': 'image/bmp',
         'tiff': 'image/tiff', 'tif': 'image/tiff', 'pdf': 'application/pdf',
+        'mp4': 'video/mp4', 'mov': 'video/mp4', 'webm': 'video/webm',
+        'avi': 'video/avi', 'mkv': 'video/webm',
     }.get(ext, '')
 
 
+def _compress_image(pil_img: Image.Image) -> str | None:
+    """Resize + JPEG-compress a PIL image and return a base64 data URL.
+
+    Qwen3 VL tokenises images into tile grids.  Sending full-resolution PNGs
+    wastes vision tokens (often 4-10x more) with negligible quality gain.
+    Down-scaling to MAX_IMAGE_DIMENSION and encoding as JPEG at JPEG_QUALITY
+    keeps the image visually identical for analysis while dramatically
+    reducing both token count and network transfer size.
+    """
+    try:
+        if pil_img.mode in ('RGBA', 'P', 'LA'):
+            pil_img = pil_img.convert('RGB')
+        elif pil_img.mode != 'RGB':
+            pil_img = pil_img.convert('RGB')
+
+        # Resize if either dimension exceeds MAX_IMAGE_DIMENSION
+        w, h = pil_img.size
+        if max(w, h) > MAX_IMAGE_DIMENSION:
+            scale = MAX_IMAGE_DIMENSION / max(w, h)
+            new_w, new_h = int(w * scale), int(h * scale)
+            pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
+            log.info('image_resized', original=f'{w}x{h}', resized=f'{new_w}x{new_h}')
+
+        buf = io.BytesIO()
+        pil_img.save(buf, format='JPEG', quality=JPEG_QUALITY, optimize=True)
+        return 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        log.error('image_compress_error', error=str(e))
+        return None
+
+
 def _image_to_data_url(raw_bytes: bytes) -> str | None:
-    """Decode the image bytes with PIL and re-encode as a base64 PNG data-URL."""
+    """Decode the image bytes with PIL, compress, and return as a JPEG data-URL."""
     try:
         img = Image.open(io.BytesIO(raw_bytes))
-        if img.mode in ('RGBA', 'P'):
-            img = img.convert('RGB')
-        buf = io.BytesIO()
-        img.save(buf, format='PNG')
-        return 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+        return _compress_image(img)
     except Exception as e:
         log.error('image_conversion_error', error=str(e))
         return None
 
 
 def _pdf_to_data_urls(pdf_bytes: bytes, job_id: str) -> list[str]:
-    """Render each PDF page to a PNG data-URL using pypdfium2."""
+    """Render every PDF page as a compressed JPEG data-URL using pypdfium2."""
     try:
         import pypdfium2 as pdfium
         pdf = pdfium.PdfDocument(pdf_bytes)
@@ -389,14 +445,78 @@ def _pdf_to_data_urls(pdf_bytes: bytes, job_id: str) -> list[str]:
             page = pdf[i]
             bitmap = page.render(scale=150 / 72)
             pil_image = bitmap.to_pil()
-            buf = io.BytesIO()
-            pil_image.save(buf, format='PNG')
-            result.append('data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode())
+            data_url = _compress_image(pil_image)
+            if data_url:
+                result.append(data_url)
         log.info('pdf_converted', pages=len(result), total_pages=len(pdf))
         return result
     except Exception as e:
         log.error('pdf_conversion_error', error=str(e))
         return []
+
+
+def _video_to_data_urls(video_bytes: bytes, job_id: str) -> list[str]:
+    """Extract evenly-spaced frames from a video, compress, and return as data URLs.
+
+    Uses OpenCV (headless) to decode the video.  Because cv2.VideoCapture
+    requires a file path (not a bytes buffer), we write to a temp file that is
+    cleaned up immediately after extraction.
+    """
+    import tempfile
+    try:
+        import cv2
+    except ImportError:
+        log.error('opencv_not_installed')
+        return []
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.mp4')
+    try:
+        os.write(tmp_fd, video_bytes)
+        os.close(tmp_fd)
+
+        cap = cv2.VideoCapture(tmp_path)
+        if not cap.isOpened():
+            log.error('video_open_failed')
+            return []
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        duration_s = total_frames / fps if fps > 0 else 0
+
+        log.info('video_info', total_frames=total_frames, fps=round(fps, 2),
+                 duration_s=round(duration_s, 1))
+
+        # Pick evenly-spaced frame indices
+        n_frames = min(total_frames, MAX_VIDEO_FRAMES)
+        if n_frames <= 0:
+            cap.release()
+            return []
+        frame_indices = [int(i * total_frames / n_frames) for i in range(n_frames)]
+
+        results: list[str] = []
+        for idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(frame_rgb)
+            data_url = _compress_image(pil_img)
+            if data_url:
+                results.append(data_url)
+
+        cap.release()
+        log.info('video_frames_extracted', extracted=len(results),
+                 requested=n_frames)
+        return results
+    except Exception as e:
+        log.error('video_conversion_error', error=str(e))
+        return []
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def _parse_model_response(text: str) -> dict:

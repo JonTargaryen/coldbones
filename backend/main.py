@@ -45,10 +45,15 @@ MODEL_NAME        = os.environ.get("MODEL_NAME",        "qwen/qwen3.5-35b-a3b")
 MAX_TOKENS  = int(os.environ.get("MAX_INFERENCE_TOKENS", 8192))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", 20))
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB pre-compression
+MAX_IMAGE_DIMENSION = int(os.environ.get('MAX_IMAGE_DIMENSION', 1568))
+JPEG_QUALITY        = int(os.environ.get('JPEG_QUALITY', 85))
+MAX_VIDEO_FRAMES    = int(os.environ.get('MAX_VIDEO_FRAMES', 20))
 
 ACCEPTED_CONTENT_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp",
     "image/gif", "image/bmp", "image/tiff", "application/pdf",
+    "video/mp4", "video/webm", "video/quicktime",
+    "video/x-msvideo", "video/x-matroska",
 }
 
 SYSTEM_PROMPT = """You are a precise visual analyst. Examine the provided image carefully and respond with a JSON object (no markdown fences) matching this exact schema:
@@ -212,6 +217,8 @@ async def analyze(request: Request):
     try:
         if detected == "application/pdf":
             image_data_urls = _pdf_to_data_urls(raw_bytes)
+        elif detected.startswith("video/"):
+            image_data_urls = _video_to_data_urls(raw_bytes)
         else:
             url = _image_to_data_url(raw_bytes)
             image_data_urls = [url] if url else []
@@ -294,17 +301,42 @@ def _detect_type(file_bytes: bytes, fallback: str) -> str:
         return "image/gif"
     if b"WEBP" in file_bytes[:12]:
         return "image/webp"
+    # Video formats
+    if len(file_bytes) >= 12 and file_bytes[4:8] == b"ftyp":
+        return "video/mp4"
+    if file_bytes[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm"
+    if file_bytes[:4] == b"RIFF" and file_bytes[8:12] == b"AVI ":
+        return "video/avi"
     return fallback
+
+
+def _compress_image(pil_img: Image.Image) -> str | None:
+    """Resize + JPEG-compress a PIL image and return a base64 data URL."""
+    try:
+        if pil_img.mode in ("RGBA", "P", "LA"):
+            pil_img = pil_img.convert("RGB")
+        elif pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+
+        w, h = pil_img.size
+        if max(w, h) > MAX_IMAGE_DIMENSION:
+            scale = MAX_IMAGE_DIMENSION / max(w, h)
+            new_w, new_h = int(w * scale), int(h * scale)
+            pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
+
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        logger.error(f"Image compress error: {e}")
+        return None
 
 
 def _image_to_data_url(raw_bytes: bytes) -> str | None:
     try:
         img = Image.open(io.BytesIO(raw_bytes))
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        return _compress_image(img)
     except Exception as e:
         logger.error(f"Image conversion error: {e}")
         return None
@@ -321,10 +353,55 @@ def _pdf_to_data_urls(pdf_bytes: bytes) -> list[str]:
 
     result = []
     for page in pages[:MAX_PDF_PAGES]:
-        buf = io.BytesIO()
-        page.save(buf, format="PNG")
-        result.append("data:image/png;base64," + base64.b64encode(buf.getvalue()).decode())
+        url = _compress_image(page)
+        if url:
+            result.append(url)
     return result
+
+
+def _video_to_data_urls(video_bytes: bytes) -> list[str]:
+    """Extract evenly-spaced frames from a video, compress, return as data URLs."""
+    import tempfile
+    try:
+        import cv2
+    except ImportError:
+        raise RuntimeError("opencv-python-headless not installed — run: pip install opencv-python-headless")
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.mp4')
+    try:
+        os.write(tmp_fd, video_bytes)
+        os.close(tmp_fd)
+
+        cap = cv2.VideoCapture(tmp_path)
+        if not cap.isOpened():
+            raise RuntimeError("Could not open video file")
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        n_frames = min(total_frames, MAX_VIDEO_FRAMES)
+        if n_frames <= 0:
+            cap.release()
+            return []
+        frame_indices = [int(i * total_frames / n_frames) for i in range(n_frames)]
+
+        results: list[str] = []
+        for idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(frame_rgb)
+            data_url = _compress_image(pil_img)
+            if data_url:
+                results.append(data_url)
+
+        cap.release()
+        return results
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def _parse(raw_text: str) -> dict:
