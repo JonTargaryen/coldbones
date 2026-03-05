@@ -169,7 +169,6 @@ export default function App() {
       <header className="app-header">
         <div className="header-left">
           <h1 className="app-title">ColdBones</h1>
-          <span className="app-subtitle">{t.appSubtitle}</span>
         </div>
         <div className="header-right">
           <LanguagePicker />

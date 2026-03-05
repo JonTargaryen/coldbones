@@ -118,17 +118,6 @@ body {
   white-space: nowrap;
 }
 
-.app-subtitle {
-  font-size: 0.775rem;
-  font-weight: 400;
-  color: var(--md-outline);
-  white-space: nowrap;
-  padding: 3px 10px;
-  background: var(--md-surface-container);
-  border-radius: var(--md-shape-full);
-  border: 1px solid var(--md-outline-variant);
-}
-
 .header-right { display: flex; align-items: center; gap: 8px; }
 
 .app-main {
@@ -906,7 +895,6 @@ body {
    ══ RESPONSIVE — Tablet (≤ 900px)
    ══════════════════════════════════════════════ */
 @media (max-width: 900px) {
-  .app-subtitle { display: none; }
   .status-detail { display: none; }
 
   .hero { padding: 40px 20px 32px; }
