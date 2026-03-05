@@ -53,6 +53,7 @@ infrastructure/dist/
 
 # ----- CDK / AWS -----
 infrastructure/cdk.out/
+infrastructure/cdk.api/
 cdk.out/
 
 # ----- Runtime / Temp -----

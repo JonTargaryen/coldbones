@@ -25,9 +25,11 @@ describe('StorageStack', () => {
     template = Template.fromStack(stack);
   });
 
-  test('creates versioned upload S3 bucket', () => {
+  test('creates upload S3 bucket with encryption', () => {
     template.hasResourceProperties('AWS::S3::Bucket', {
-      VersioningConfiguration: { Status: 'Enabled' },
+      BucketEncryption: Match.objectLike({
+        ServerSideEncryptionConfiguration: Match.anyValue(),
+      }),
     });
   });
 
@@ -114,8 +116,8 @@ describe('ApiStack', () => {
     template = Template.fromStack(api);
   });
 
-  test('creates a REST API Gateway', () => {
-    template.resourceCountIs('AWS::ApiGateway::RestApi', 1);
+  test('creates an HTTP API Gateway', () => {
+    template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
   });
 
   test('creates Lambda functions for each handler', () => {

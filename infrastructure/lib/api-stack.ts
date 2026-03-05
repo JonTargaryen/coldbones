@@ -232,11 +232,19 @@ export class ApiStack extends cdk.Stack {
     });
     analyzeRouterFn.addEnvironment('ORCHESTRATOR_FUNCTION_ARN', analyzeOrchestratorFn.functionArn);
 
-    // Scoped Lambda:Invoke — only router → orchestrator, not function:*
-    lambdaRole.addToPrincipalPolicy(new iam.PolicyStatement({
-      actions: ['lambda:InvokeFunction'],
-      resources: [analyzeOrchestratorFn.functionArn],
-    }));
+    // Scoped Lambda:Invoke — only router → orchestrator.
+    // We use a separate inline policy (not the shared role's DefaultPolicy)
+    // to avoid a circular dependency: DefaultPolicy would need the orchestrator
+    // ARN (Ref), but the orchestrator DependsOn DefaultPolicy.
+    new iam.Policy(this, 'RouterInvokePolicy', {
+      roles: [lambdaRole],
+      statements: [
+        new iam.PolicyStatement({
+          actions: ['lambda:InvokeFunction'],
+          resources: [analyzeOrchestratorFn.functionArn],
+        }),
+      ],
+    });
 
 
     const jobStatusFn = fn('JobStatusFn', 'job_status', {
@@ -390,7 +398,6 @@ export class ApiStack extends cdk.Stack {
     });
 
     // ─── Tags for cost allocation ──────────────────────────────────────────
-    cdk.Tags.of(this).add('project', 'coldbones');
     cdk.Tags.of(this).add('feature', 'bedrock-ondemand');
 
     // ─── Outputs ──────────────────────────────────────────────────────────

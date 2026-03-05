@@ -6,7 +6,7 @@ FastAPI server that calls LM Studio (running on Seratonin via Tailscale) via the
 
 Usage:
   pip install -r requirements.txt
-  uvicorn main:app --reload --port 9000
+  uvicorn main:app --reload --port 8000
 
 Environment variables (set in .env):
   LM_STUDIO_URL         https://seratonin.tail40ae2c.ts.net  (Tailscale Funnel URL)
