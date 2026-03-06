@@ -277,7 +277,7 @@ describe('App', () => {
     await act(async () => {
       render(<App />, { wrapper: Wrapper })
     })
-    expect(screen.getAllByText(/images.*pdf.*video/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/images.*pdf/i).length).toBeGreaterThan(0)
   })
 
   it('shows Analyzing text when file is analyzing', async () => {

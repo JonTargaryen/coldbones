@@ -1,7 +1,7 @@
 /**
  * Final coverage-boost tests targeting remaining statement/branch gaps:
  * - App.tsx: slow-mode enqueue, history/toast effects, elapsed timer complete
- * - FilePreview.tsx: PDF nav buttons, PdfCanvas via PDF file render, video file
+ * - FilePreview.tsx: PDF nav buttons, PdfCanvas via PDF file render
  * - JobTracker.tsx: keyboard nav, processing status
  * - UploadZone.tsx: onDrop empty, disabled clipboard
  * - validation.ts: validatePdfPageCount hit
@@ -117,27 +117,6 @@ describe('FilePreview — PDF page navigation', () => {
       expect(screen.getByText(/Page 1 of 3/)).toBeInTheDocument()
     })
     expect(screen.getByRole('button', { name: /previous page/i })).toBeDisabled()
-  })
-
-  it('renders video file without PDF nav', () => {
-    const vid: UploadedFile = {
-      id: 'v1',
-      file: new File([new Uint8Array(100)], 'clip.mp4', { type: 'video/mp4' }),
-      name: 'clip.mp4',
-      size: 100,
-      previewUrl: undefined,
-      status: 'uploaded',
-      progress: 100,
-    }
-    render(
-      <ModeProvider>
-        <LanguageProvider>
-          <FilePreview file={vid} files={[vid]} onSelect={vi.fn()} onRemove={vi.fn()} />
-        </LanguageProvider>
-      </ModeProvider>,
-    )
-    expect(screen.queryByText(/Page/)).toBeNull()
-    expect(screen.getByText('clip.mp4')).toBeInTheDocument()
   })
 })
 

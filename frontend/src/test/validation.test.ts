@@ -6,7 +6,6 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   isAcceptedType,
   isImage,
-  isVideo,
   isPdf,
   validateFile,
   validatePdfPageCount,
@@ -32,9 +31,7 @@ describe('isAcceptedType', () => {
   it('accepts image/bmp',  () => expect(isAcceptedType(makeFile('f.bmp', 'image/bmp'))).toBe(true))
   it('accepts image/tiff', () => expect(isAcceptedType(makeFile('f.tiff', 'image/tiff'))).toBe(true))
   it('accepts application/pdf', () => expect(isAcceptedType(makeFile('f.pdf', 'application/pdf'))).toBe(true))
-  it('accepts video/mp4', () => expect(isAcceptedType(makeFile('f.mp4', 'video/mp4'))).toBe(true))
-  it('accepts video/webm', () => expect(isAcceptedType(makeFile('f.webm', 'video/webm'))).toBe(true))
-  it('accepts video/quicktime', () => expect(isAcceptedType(makeFile('f.mov', 'video/quicktime'))).toBe(true))
+  it('rejects video/mp4', () => expect(isAcceptedType(makeFile('f.mp4', 'video/mp4'))).toBe(false))
   it('rejects text/plain', () => expect(isAcceptedType(makeFile('f.txt', 'text/plain'))).toBe(false))
   it('rejects empty type', () => expect(isAcceptedType(makeFile('f', ''))).toBe(false))
 })
@@ -45,17 +42,6 @@ describe('isImage', () => {
   it('returns true for image/jpeg', () => expect(isImage(makeFile('f.jpg', 'image/jpeg'))).toBe(true))
   it('returns true for image/tiff', () => expect(isImage(makeFile('f.tiff', 'image/tiff'))).toBe(true))
   it('returns false for application/pdf', () => expect(isImage(makeFile('f.pdf', 'application/pdf'))).toBe(false))
-  it('returns false for video/mp4', () => expect(isImage(makeFile('f.mp4', 'video/mp4'))).toBe(false))
-})
-
-// ─── isVideo ─────────────────────────────────────────────────────────────────
-
-describe('isVideo', () => {
-  it('returns true for video/mp4', () => expect(isVideo(makeFile('f.mp4', 'video/mp4'))).toBe(true))
-  it('returns true for video/webm', () => expect(isVideo(makeFile('f.webm', 'video/webm'))).toBe(true))
-  it('returns true for video/quicktime', () => expect(isVideo(makeFile('f.mov', 'video/quicktime'))).toBe(true))
-  it('returns false for image/jpeg', () => expect(isVideo(makeFile('f.jpg', 'image/jpeg'))).toBe(false))
-  it('returns false for application/pdf', () => expect(isVideo(makeFile('f.pdf', 'application/pdf'))).toBe(false))
 })
 
 // ─── isPdf ───────────────────────────────────────────────────────────────────
@@ -63,7 +49,6 @@ describe('isVideo', () => {
 describe('isPdf', () => {
   it('returns true for application/pdf', () => expect(isPdf(makeFile('f.pdf', 'application/pdf'))).toBe(true))
   it('returns false for image/jpeg', () => expect(isPdf(makeFile('f.jpg', 'image/jpeg'))).toBe(false))
-  it('returns false for video/mp4', () => expect(isPdf(makeFile('f.mp4', 'video/mp4'))).toBe(false))
 })
 
 // ─── validateFile ─────────────────────────────────────────────────────────────
@@ -75,10 +60,6 @@ describe('validateFile', () => {
 
   it('returns null for valid PDF within size limit', () => {
     expect(validateFile(makeFile('f.pdf', 'application/pdf', 100))).toBeNull()
-  })
-
-  it('returns null for valid MP4 within size limit', () => {
-    expect(validateFile(makeFile('f.mp4', 'video/mp4', 1024))).toBeNull()
   })
 
   it('returns error for unsupported type', () => {

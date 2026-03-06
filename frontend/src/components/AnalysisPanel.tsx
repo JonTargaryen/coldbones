@@ -85,7 +85,6 @@ export function AnalysisPanel({ result, isAnalyzing, currentFileName, error, ela
   if (isAnalyzing) {
     return (
       <div className="analysis-panel loading-state" role="status" aria-live="polite">
-        <div className="analysis-spinner" aria-hidden="true" />
         <p className="analysis-loading-text">
           {t.analyzing(currentFileName)}
         </p>

@@ -190,7 +190,7 @@ describe('AnalysisPanel', () => {
     expect(screen.getByText('PDF failed')).toBeInTheDocument()
   })
 
-  it('shows loading spinner when isAnalyzing=true', () => {
+  it('shows loading state when isAnalyzing=true', () => {
     r(<AnalysisPanel result={null} isAnalyzing currentFileName="test.png" error={null} elapsedMs={2500} />)
     expect(screen.getByRole('status')).toBeInTheDocument()
     // elapsedMs=2500 → 2.5s

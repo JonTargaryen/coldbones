@@ -86,6 +86,7 @@ body {
   line-height: 1.5;
   min-height: 100vh;
   -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ══════════════════════════════════════════════
@@ -98,7 +99,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
   height: 64px;
   background: var(--md-surface-container-low);
   border-bottom: 1px solid var(--md-outline-variant);
@@ -480,7 +481,7 @@ body {
 .analysis-spinner { width: 48px; height: 48px; border: 4px solid var(--md-surface-container-high); border-top-color: var(--md-primary); border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.analysis-loading-text { color: var(--md-on-surface-variant); font-size: 0.95rem; }
+.analysis-loading-text { color: var(--md-on-surface-variant); font-size: 0.95rem; font-weight: 700; }
 .analysis-elapsed { font-size: 2rem; font-weight: 300; color: var(--md-on-surface); font-variant-numeric: tabular-nums; }
 .analysis-thinking-hint { font-size: 0.8rem; color: var(--md-outline); font-style: italic; }
 .analysis-error { color: var(--md-error); font-size: 0.9rem; }
@@ -916,16 +917,51 @@ body {
    ══ RESPONSIVE — Phone (≤ 600px)
    ══════════════════════════════════════════════ */
 @media (max-width: 600px) {
-  .app-header { padding: 0 12px; height: 56px; }
+  .app-header {
+    padding: 0 12px;
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
   .app-title { font-size: 1.1rem; }
 
-  /* Compact the right-side header controls so they don't overflow on 375px screens */
-  .header-right { gap: 6px; }
+  /* Stack controls vertically on mobile */
+  .header-right {
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    justify-content: flex-start;
+    order: 2;
+  }
+
+  /* Make provider picker vertical on mobile */
+  .provider-picker {
+    flex-direction: column;
+    height: auto;
+    border-radius: var(--md-shape-md);
+    width: auto;
+    align-self: flex-start;
+  }
+  .provider-btn {
+    padding: 8px 14px;
+    min-width: unset;
+    justify-content: flex-start;
+    min-height: 40px;
+  }
+  .provider-btn + .provider-btn {
+    border-left: none;
+    border-top: 1px solid var(--md-outline);
+  }
+
+  /* Health chip shows full label on mobile since it's now stacked */
+  .health-label { display: inline; }
+  .health-ok, .health-err { padding: 6px 12px; gap: 6px; }
+
   .lang-select { font-size: 0.82rem; min-width: 80px; padding: 6px 24px 6px 8px; }
   .mode-btn { padding: 0 10px; min-width: 40px; font-size: 0.82rem; }
-  /* Collapse health chip to dot-only — full text still in tooltip */
-  .health-label { display: none; }
-  .health-ok, .health-err { padding: 6px 8px; gap: 0; }
 
   .hero { padding: 28px 16px 24px; }
   .hero-title { font-size: 1.75rem; }
@@ -942,19 +978,27 @@ body {
   .analysis-elapsed { font-size: 1.6rem; }
   .preview-image { max-height: 250px; }
   .preview-image-container { min-height: 140px; }
+
+  /* Streaming preview full width on mobile */
+  .streaming-preview { max-width: 100%; }
+  .full-response-content { padding: 12px; }
+
+  /* Toast responsive */
+  .toast-container { left: 12px; right: 12px; bottom: 12px; max-width: none; }
 }
 
 /* ══════════════════════════════════════════════
    ══ RESPONSIVE — Small phone (≤ 380px)
    ══════════════════════════════════════════════ */
 @media (max-width: 380px) {
-  .app-header { padding: 0 10px; }
+  .app-header { padding: 6px 10px; }
   .header-right { gap: 4px; }
   .lang-select { min-width: 70px; padding: 6px 22px 6px 6px; font-size: 0.78rem; }
   .mode-btn { padding: 0 8px; min-width: 36px; font-size: 0.78rem; }
   .hero { padding: 20px 12px 20px; }
   .hero-title { font-size: 1.5rem; }
   .btn-analyze-now { height: 48px; }
+  .provider-btn { padding: 6px 10px; font-size: 0.78rem; }
 }
 
 /* Overflow-wrap applies globally */

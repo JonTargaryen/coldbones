@@ -39,6 +39,7 @@ export default function App() {
   const [healthError, setHealthError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const resultsRef = useRef<HTMLElement>(null);
 
   // ── Health check ─────────────────────────────────────────────────────────────────
   // The upload zone is disabled (grayed out) until health.status === 'ok' &&
@@ -142,6 +143,8 @@ export default function App() {
   const handleAnalyze = async () => {
     if (!selectedFile?.s3Key) return;
     setElapsedMs(0);
+    // Auto-scroll to results area on mobile
+    setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     if (mode === 'slow') {
       await enqueue(selectedFile.id, selectedFile.s3Key, selectedFile.file.name, lang, provider);
     } else {
@@ -270,7 +273,7 @@ export default function App() {
 
         {/* ── Results: file preview + analysis panel ── */}
         {files.length > 0 && (
-          <section className="results-area" aria-label="Analysis results">
+          <section className="results-area" ref={resultsRef} aria-label="Analysis results">
             <div className="results-sidebar">
               <FilePreview
                 file={selectedFile}
