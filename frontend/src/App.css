@@ -1021,44 +1021,6 @@ body {
   border-color: var(--accent);
 }
 
-/* ══════════════════════════════════════════════════════════════
-   ══ Light theme (auto-detect via prefers-color-scheme)
-   ══════════════════════════════════════════════════════════════ */
-@media (prefers-color-scheme: light) {
-  :root {
-    /* MD3 Light Scheme */
-    --md-primary:              #1A73E8;
-    --md-on-primary:           #FFFFFF;
-    --md-primary-container:    #D6E3FF;
-    --md-on-primary-container: #001A41;
-    --md-secondary:            #455A64;
-    --md-on-secondary:         #FFFFFF;
-    --md-error:                #B3261E;
-    --md-on-error:             #FFFFFF;
-    --md-error-container:      #F9DEDC;
-    --md-background:           #FAFAFA;
-    --md-on-background:        #1F1F1F;
-    --md-surface:              #FFFFFF;
-    --md-on-surface:           #1F1F1F;
-    --md-surface-variant:      #E1E3E5;
-    --md-on-surface-variant:   #49454F;
-    --md-surface-container-low:     #F5F5F5;
-    --md-surface-container:         #EEEEEE;
-    --md-surface-container-high:    #E0E0E0;
-    --md-surface-container-highest: #D6D6D6;
-    --md-outline:         #79747E;
-    --md-outline-variant: #C4C7C5;
-    --md-success:  #1B8D3E;
-    --md-warning:  #E37400;
-    /* Elevation — lighter shadows for light mode */
-    --md-elev-1: 0 1px 2px rgba(0,0,0,.1), 0 1px 3px rgba(0,0,0,.08);
-    --md-elev-2: 0 1px 2px rgba(0,0,0,.1), 0 2px 6px 2px rgba(0,0,0,.08);
-    --md-elev-3: 0 4px 8px 3px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.1);
-    /* Re-derive aliases */
-    --accent-hover: #1565C0;
-  }
-}
-
 /* ── Toast Notifications ── */
 .toast-container {
   position: fixed;
