@@ -33,11 +33,10 @@ Model selection:
   Both ON_DEMAND model IDs and INFERENCE_PROFILE IDs work with the Converse
   API — just pass them as the modelId parameter.
 
-Converse API vs invoke_model:
-  The existing bedrock_client.py uses invoke_model with raw Qwen prompt
-  templates.  The Converse API abstracts that away — you send structured
-  messages with role/content arrays and Bedrock handles the model-specific
-  tokenization.  This is the recommended approach for all new integrations.
+Converse API notes:
+    The Converse API abstracts model-specific prompt templates away — you send
+    structured messages with role/content arrays and Bedrock handles tokenization.
+    This is the recommended approach for new integrations.
 """
 import base64
 import json

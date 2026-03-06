@@ -9,24 +9,22 @@ asynchronously by analyze_router with InvocationType='Event', which means:
     status will stay PROCESSING until the frontend poll times out.  This is
     acceptable because the orchestrator writes its own FAILED status on error.
 
-Tri-provider support:
-  The orchestrator supports three inference backends:
-    1. Bedrock On-Demand (default) — Converse API, pay-per-token, scale-to-zero
-    2. Desktop (LM Studio via Tailscale Funnel) — the RTX 5090 GPU
-    3. Bedrock CMI (legacy) — Custom Model Import, Qwen2.5-VL on AWS infra
+Dual-provider support:
+    The orchestrator supports two inference backends:
+        1. Bedrock On-Demand (default) — Converse API, pay-per-token, scale-to-zero
+        2. Desktop (LM Studio via Tailscale Funnel) — the RTX 5090 GPU
 
   The provider is selected by the analyze_router via the event's 'provider'
   field:
     'ondemand' → bedrock_ondemand_client.py (Converse API, cloud-primary default)
-    'desktop'  → desktop_client.py (LM Studio via Tailscale)
-    'bedrock'  → bedrock_client.py (CMI, legacy path)
+        'desktop'  → desktop_client.py (LM Studio via Tailscale)
 
 Full flow:
   1. Download the file from S3 using the s3Key written by the presign Lambda.
   2. Detect the true file type from magic bytes (not from the extension or the
      Content-Type header, which can be spoofed).
   3. Convert to one or more base64-encoded PNG data-URLs.
-  4. Route inference to the selected provider (ondemand, desktop, or bedrock-cmi).
+    4. Route inference to the selected provider (ondemand or desktop).
   5. Parse and validate the structured response (CoT, summary, description,
      insights, observations, OCR text).
   6. Write the full result JSON back to S3 next to the original upload.
@@ -37,13 +35,10 @@ Desktop endpoint discovered at runtime from SSM (see desktop_client.py):
   /coldbones/desktop-url  → Tailscale Funnel base URL
   /coldbones/desktop-port → LM Studio port (443 when using Funnel)
 
-Bedrock model ARN discovered from SSM (see bedrock_client.py):
-  /coldbones/bedrock-model-arn → Bedrock imported model ARN
-
 Event shape (sent by analyze_router):
   { "jobId": "<uuid>", "s3Key": "uploads/<uuid>/photo.jpg",
     "lang": "en", "filename": "photo.jpg", "mode": "fast",
-    "provider": "ondemand|desktop|bedrock" }
+        "provider": "ondemand|desktop" }
 """
 from __future__ import annotations
 
@@ -65,8 +60,7 @@ from PIL import Image
 # Inference clients — resolved from SSM at runtime
 sys.path.insert(0, '/var/task')
 from desktop_client import get_openai_client
-from bedrock_client import invoke_bedrock
-from bedrock_ondemand_client import invoke_ondemand, invoke_ondemand_streaming
+from bedrock_ondemand_client import invoke_ondemand_streaming
 from logger import get_logger
 
 log = get_logger('analyze_orchestrator')
@@ -162,7 +156,7 @@ def handler(event: dict, _context: Any) -> dict:
     s3_key   = event.get('s3Key', '')
     lang     = event.get('lang', 'en')
     filename = event.get('filename', 'file')
-    provider = event.get('provider', 'ondemand')  # 'ondemand', 'desktop', or 'bedrock'
+    provider = event.get('provider', 'ondemand')  # 'ondemand' or 'desktop'
 
     log.set_job_id(job_id)
     log.info('orchestrator_start', provider=provider, s3_key=s3_key, filename=filename, lang=lang)
@@ -277,26 +271,6 @@ def handler(event: dict, _context: Any) -> dict:
         except Exception as e:
             log.exception('inference_failed', exc=e, provider='ondemand')
             return _error(502, f'Bedrock On-Demand inference failed: {e}', job_id)
-    elif provider == 'bedrock':
-        try:
-            with log.timed('inference', provider='bedrock-cmi') as ctx:
-                bedrock_resp = invoke_bedrock(
-                    image_data_urls=image_data_urls,
-                    system_prompt=SYSTEM_PROMPT,
-                    analysis_text=analysis_text,
-                    max_tokens=MAX_TOKENS,
-                    temperature=0.6,
-                )
-                raw_content   = bedrock_resp['raw_text']
-                finish_reason = bedrock_resp['finish_reason']
-                model_name    = bedrock_resp['model_arn']
-                provider_name = bedrock_resp['provider']
-                usage_stats   = {}
-                ctx['model'] = model_name
-                ctx['finish_reason'] = finish_reason
-        except Exception as e:
-            log.exception('inference_failed', exc=e, provider='bedrock-cmi')
-            return _error(502, f'Bedrock CMI inference failed: {e}', job_id)
     else:
         try:
             client, model_name = get_openai_client(timeout=580.0)

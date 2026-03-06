@@ -142,11 +142,10 @@ describe('App', () => {
     globalThis.fetch = origFetch
   })
 
-  it('renders ColdBones title and Visual Analyzer heading', async () => {
+  it('renders Visual Analyzer heading', async () => {
     await act(async () => {
       render(<App />, { wrapper: Wrapper })
     })
-    expect(screen.getByText('ColdBones')).toBeInTheDocument()
     expect(screen.getByText('Visual Analyzer')).toBeInTheDocument()
   })
 

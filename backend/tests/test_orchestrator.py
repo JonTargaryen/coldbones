@@ -48,16 +48,13 @@ def _load_handler():
 # We need to import with mocked boto3 to avoid real AWS calls
 # Use setdefault so we don't overwrite the real modules if already imported
 _mock_modules_applied = {}
-for mod_name in ("desktop_client", "bedrock_client", "bedrock_ondemand_client"):
+for mod_name in ("desktop_client", "bedrock_ondemand_client"):
     if mod_name not in sys.modules:
         fake = types.ModuleType(mod_name)
         if mod_name == "desktop_client":
             fake.get_openai_client = MagicMock()
             fake.is_desktop_alive = MagicMock(return_value=False)
-        elif mod_name == "bedrock_client":
-            fake.invoke_bedrock = MagicMock()
         else:
-            fake.invoke_ondemand = MagicMock()
             fake.invoke_ondemand_streaming = MagicMock()
         sys.modules[mod_name] = fake
         _mock_modules_applied[mod_name] = fake
@@ -716,41 +713,6 @@ class TestHandler:
         }, CTX)
 
         assert result["statusCode"] == 400
-
-    def test_bedrock_provider_success(self):
-        mock_s3 = MagicMock()
-        png_bytes = _make_png_bytes()
-        mock_s3.get_object.return_value = {
-            "Body": MagicMock(read=MagicMock(return_value=png_bytes))
-        }
-        mock_s3.put_object.return_value = {}
-        orch_mod.s3_client = mock_s3
-
-        mock_table = MagicMock()
-        mock_ddb = MagicMock()
-        mock_ddb.Table.return_value = mock_table
-        orch_mod.dynamodb = mock_ddb
-        orch_mod.JOBS_TABLE_NAME = "test-jobs"
-
-        with patch.object(orch_mod, "invoke_bedrock") as mock_invoke:
-            mock_invoke.return_value = {
-                "raw_text": json.dumps({"summary": "bedrock cmi result"}),
-                "model_arn": "arn:test",
-                "provider": "Bedrock (Qwen2.5-VL)",
-                "finish_reason": "stop",
-            }
-
-            result = orch_mod.handler({
-                "jobId": "j-bedrock",
-                "s3Key": "uploads/abc/photo.png",
-                "lang": "en",
-                "filename": "photo.png",
-                "provider": "bedrock",
-            }, CTX)
-
-        assert result["statusCode"] == 200
-        body = json.loads(result["body"])
-        assert body["summary"] == "bedrock cmi result"
 
     def test_inference_failure_returns_502(self):
         mock_s3 = MagicMock()

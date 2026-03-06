@@ -3,7 +3,7 @@
 export type ProcessingMode = 'fast' | 'slow';
 
 /** Inference provider selection */
-export type InferenceProvider = 'auto' | 'local' | 'cloud' | 'cloud-cmi';
+export type InferenceProvider = 'auto' | 'local' | 'cloud';
 
 /** Status values used on UploadedFile and displayed in UI components */
 export type FileStatus =

@@ -172,8 +172,6 @@ export default function App() {
       ? 'LM Studio'
       : provider === 'cloud'
       ? 'Bedrock On-Demand'
-      : provider === 'cloud-cmi'
-      ? 'Bedrock CMI'
       : health?.provider.split('(')[0].trim() ?? 'Provider';
 
   const selectedProviderHealthy =
@@ -191,9 +189,6 @@ export default function App() {
     <div className="app">
       {/* Header */}
       <header className="app-header">
-        <div className="header-left">
-          <h1 className="app-title">ColdBones</h1>
-        </div>
         <div className="header-right">
           <LanguagePicker />
           <ModeToggle disabled={isBusy} />

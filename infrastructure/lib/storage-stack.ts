@@ -268,6 +268,55 @@ export class StorageStack extends cdk.Stack {
       description: 'Coldbones SPA OAC',
     });
 
+    // Canonical host redirect: apex -> www.
+    // This keeps a single public URL while still allowing app.<domain> to work.
+    const apexToWwwRedirectFn = domainName
+      ? new cloudfront.Function(this, 'ApexToWwwRedirectFn', {
+          functionName: 'coldbones-apex-to-www-redirect',
+          code: cloudfront.FunctionCode.fromInline(
+            `function toQueryString(qs) {
+  var parts = [];
+  for (var key in qs) {
+    if (!Object.prototype.hasOwnProperty.call(qs, key)) continue;
+    var entry = qs[key];
+    if (entry && entry.multiValue) {
+      for (var i = 0; i < entry.multiValue.length; i++) {
+        var mv = entry.multiValue[i];
+        parts.push(mv.value === '' ? key : key + '=' + mv.value);
+      }
+    } else if (entry && typeof entry.value !== 'undefined') {
+      parts.push(entry.value === '' ? key : key + '=' + entry.value);
+    } else {
+      parts.push(key);
+    }
+  }
+  return parts.join('&');
+}
+
+function handler(event) {
+  var request = event.request;
+  var host = request.headers.host && request.headers.host.value ? request.headers.host.value : '';
+
+  if (host === '${domainName}') {
+    var qs = toQueryString(request.querystring || {});
+    var location = 'https://www.${domainName}' + request.uri + (qs ? ('?' + qs) : '');
+
+    return {
+      statusCode: 301,
+      statusDescription: 'Moved Permanently',
+      headers: {
+        location: { value: location },
+        'cache-control': { value: 'no-store' }
+      }
+    };
+  }
+
+  return request;
+}`,
+          ),
+        })
+      : undefined;
+
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       defaultBehavior: {
         origin: cfOrigins.S3BucketOrigin.withOriginAccessControl(this.siteBucket, {
@@ -278,6 +327,16 @@ export class StorageStack extends cdk.Stack {
         responseHeadersPolicy: securityHeaders,
         compress: true,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        ...(apexToWwwRedirectFn
+          ? {
+              functionAssociations: [
+                {
+                  function: apexToWwwRedirectFn,
+                  eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+                },
+              ],
+            }
+          : {}),
       },
       defaultRootObject: 'index.html',
       errorResponses: [
@@ -454,6 +513,16 @@ export class StorageStack extends cdk.Stack {
           cachePolicy:           cloudfront.CachePolicy.CACHING_DISABLED,
           originRequestPolicy:   cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
           compress:              false,
+          ...(apexToWwwRedirectFn
+            ? {
+                functionAssociations: [
+                  {
+                    function: apexToWwwRedirectFn,
+                    eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+                  },
+                ],
+              }
+            : {}),
         },
       );
     }

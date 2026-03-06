@@ -12,7 +12,7 @@ const ProviderContext = createContext<ProviderContextType | undefined>(undefined
 export function ProviderProvider({ children }: { children: ReactNode }) {
   const [provider, setProviderState] = useState<InferenceProvider>(() => {
     const saved = localStorage.getItem('coldbones-provider');
-    return (saved === 'auto' || saved === 'local' || saved === 'cloud' || saved === 'cloud-cmi') ? saved : 'auto';
+    return (saved === 'auto' || saved === 'local' || saved === 'cloud') ? saved : 'auto';
   });
 
   const setProvider = (newProvider: InferenceProvider) => {

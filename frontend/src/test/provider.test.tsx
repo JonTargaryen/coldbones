@@ -50,12 +50,6 @@ describe('ProviderContext', () => {
     expect(result.current.provider).toBe('cloud')
   })
 
-  it('restores "cloud-cmi" from localStorage', () => {
-    localStorage.setItem('coldbones-provider', 'cloud-cmi')
-    const { result } = renderHook(() => useProvider(), { wrapper })
-    expect(result.current.provider).toBe('cloud-cmi')
-  })
-
   it('falls back to "auto" for invalid localStorage value', () => {
     localStorage.setItem('coldbones-provider', 'invalid')
     const { result } = renderHook(() => useProvider(), { wrapper })

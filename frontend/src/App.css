@@ -98,7 +98,7 @@ body {
 .app-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
   height: 64px;
   background: var(--md-surface-container-low);
@@ -110,16 +110,13 @@ body {
   z-index: 100;
 }
 
-.header-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-shrink: 0; }
-
-.app-title {
-  font-size: 1.25rem;
-  font-weight: 500;
-  color: var(--md-on-surface);
-  white-space: nowrap;
+.header-right {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-
-.header-right { display: flex; align-items: center; gap: 8px; }
 
 .app-main {
   display: flex;
@@ -926,12 +923,6 @@ body {
     padding-bottom: 8px;
     align-items: stretch;
   }
-  .header-left {
-    width: 100%;
-    justify-content: space-between;
-    flex-shrink: 1;
-  }
-  .app-title { font-size: 1.1rem; }
 
   .header-right {
     display: grid;

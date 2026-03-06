@@ -83,19 +83,19 @@ Create a scoped IAM user (or use an instance profile / role):
         "sqs:ChangeMessageVisibility",
         "sqs:GetQueueAttributes"
       ],
-      "Resource": "arn:aws:sqs:*:*:ColdbonesAnalysisQueue*"
+      "Resource": "arn:aws:sqs:*:*:coldbones-analysis*"
     },
     {
       "Sid": "S3",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:aws:s3:::coldbones-uploads-*/*"
+      "Resource": "arn:aws:s3:::coldbonesstorage-uploadbucket*/*"
     },
     {
       "Sid": "DynamoDB",
       "Effect": "Allow",
       "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"],
-      "Resource": "arn:aws:dynamodb:*:*:table/ColdbonesJobs*"
+      "Resource": "arn:aws:dynamodb:*:*:table/coldbones-jobs"
     }
   ]
 }
@@ -152,6 +152,10 @@ The service auto-restarts on failure and starts on boot.
 5. Upload a photo via the web app with mode=fast
 6. If desktop is on → result in a few seconds
 7. If desktop is off → status shows QUEUED; turn desktop on → worker picks it up
+
+Important retry behavior:
+- SQS retries only happen after a worker receives a message and fails to delete it.
+- If `ApproximateNumberOfMessages` keeps growing while `ApproximateNumberOfMessagesNotVisible` stays near `0`, no consumer is polling the queue (worker process is down or misconfigured).
 
 ---
 

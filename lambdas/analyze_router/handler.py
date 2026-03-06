@@ -17,9 +17,6 @@ Routing logic (cloud-primary -- optimised for low traffic + scale-to-zero):
   provider="cloud":
     Bedrock On-Demand (same as auto).
 
-  provider="cloud-cmi":
-    Legacy Bedrock CMI path (imported model, 5-min billing windows).
-
   mode="offline":
     Always enqueue to SQS.
 
@@ -27,27 +24,24 @@ Provider modes:
   - 'auto'  (default): Cloud-primary -- Bedrock On-Demand (pay-per-token)
   - 'local': Desktop only, SQS queue if offline
   - 'cloud': Bedrock On-Demand (same as auto)
-  - 'cloud-cmi': Legacy Bedrock CMI (imported model, 5-min billing windows)
 
 Event (API Gateway proxy):
   POST /api/analyze
   Body: { "s3Key": "uploads/...", "lang": "en", "mode": "fast|offline",
-          "provider": "auto|local|cloud|cloud-cmi", "filename": "photo.jpg" }
+                    "provider": "auto|local|cloud", "filename": "photo.jpg" }
 """
 import json
 import os
 import sys
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 import boto3
 from botocore.exceptions import ClientError
 
 sys.path.insert(0, '/var/task')
 from desktop_client import is_desktop_alive
-from bedrock_client import is_bedrock_available
-from bedrock_ondemand_client import is_ondemand_available
 
 lambda_client = boto3.client('lambda')
 sqs_client    = boto3.client('sqs')
@@ -77,7 +71,7 @@ def handler(event: dict, _context: Any) -> dict:
     s3_key   = body.get('s3Key', '').strip()
     lang     = body.get('lang', 'en').strip()
     mode     = body.get('mode', 'fast').strip().lower()
-    provider = body.get('provider', 'auto').strip().lower()  # auto | local | cloud | cloud-cmi
+    provider = body.get('provider', 'auto').strip().lower()  # auto | local | cloud
     filename = body.get('filename', 'file').strip()
 
     if not s3_key:
@@ -100,11 +94,6 @@ def handler(event: dict, _context: Any) -> dict:
     }
 
     if mode == 'fast':
-        if provider == 'cloud-cmi':
-            # Legacy: explicitly requested Bedrock CMI (imported model)
-            payload['provider'] = 'bedrock'
-            return _invoke_async(payload, job_id)
-
         if provider == 'cloud':
             # Bedrock On-Demand (Converse API, pay-per-token)
             payload['provider'] = 'ondemand'
@@ -122,7 +111,6 @@ def handler(event: dict, _context: Any) -> dict:
 
         # provider == 'auto' (default): cloud-primary -- Bedrock On-Demand
         # Pay-per-token, zero cold start, true scale-to-zero.
-        # At low traffic this costs pennies/month vs $30+/month for CMI.
         payload['provider'] = 'ondemand'
         print(f'[analyze_router] Cloud-primary: routing job={job_id} to Bedrock On-Demand')
         return _invoke_async(payload, job_id)
@@ -238,7 +226,7 @@ def _enqueue(payload: dict, fallback: bool = False) -> dict:
         return _error(502, f'SQS enqueue failed: {e}')
 
 
-def _validate_upload_size(s3_key: str) -> dict | None:
+def _validate_upload_size(s3_key: str) -> Optional[dict]:
     """Validate S3 object size against MAX_UPLOAD_BYTES.
 
     Returns an HTTP error dict when validation fails, else None.

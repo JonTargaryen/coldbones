@@ -614,16 +614,6 @@ class TestAnalyzeRouterBranches:
         assert "limit" in json.loads(result["body"])["detail"].lower()
         mod.lambda_client.invoke.assert_not_called()
 
-    def test_cloud_cmi_provider(self):
-        with patch.dict("os.environ", _ROUTER_ENV):
-            mod = self._setup_mod()
-            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "provider": "cloud-cmi"})}
-            result = mod.handler(event, CTX)
-        assert result["statusCode"] == 202
-        # Should set provider to 'bedrock' internally
-        call_payload = json.loads(mod.lambda_client.invoke.call_args.kwargs["Payload"].decode())
-        assert call_payload["provider"] == "bedrock"
-
     def test_cloud_provider(self):
         with patch.dict("os.environ", _ROUTER_ENV):
             mod = self._setup_mod()

@@ -26,9 +26,6 @@ export interface ApiStackProps extends cdk.StackProps {
   desktopUrlParamName?: string;   // default: /coldbones/desktop-url
   desktopPortParamName?: string;  // default: /coldbones/desktop-port
 
-  // Bedrock CMI
-  bedrockModelArnParamName?: string; // default: /coldbones/bedrock-model-arn
-
   // Model
   modelName?: string;
 
@@ -57,7 +54,6 @@ export class ApiStack extends cdk.Stack {
     const modelName           = props.modelName ?? 'Qwen/Qwen3.5-35B-A3B-AWQ';
     const desktopUrlParam     = props.desktopUrlParamName  ?? '/coldbones/desktop-url';
     const desktopPortParam    = props.desktopPortParamName ?? '/coldbones/desktop-port';
-    const bedrockModelArnParam = props.bedrockModelArnParamName ?? '/coldbones/bedrock-model-arn';
 
     // ─── Shared Lambda role ────────────────────────────────────────────────
     const lambdaRole = new iam.Role(this, 'LambdaRole', {
@@ -72,19 +68,13 @@ export class ApiStack extends cdk.Stack {
     props.jobsTable.grantReadWriteData(lambdaRole);
     props.analysisQueue.grantSendMessages(lambdaRole);
 
-    // SSM: read desktop Tailscale Funnel URL + Bedrock model ARN
+    // SSM: read desktop Tailscale Funnel URL
     lambdaRole.addToPrincipalPolicy(new iam.PolicyStatement({
       actions: ['ssm:GetParameter'],
       resources: [`arn:aws:ssm:${this.region}:${this.account}:parameter/coldbones/*`],
     }));
 
     // Lambda:Invoke — router invokes orchestrator (scoped after fn creation)
-
-    // Bedrock: invoke imported custom model (CMI — legacy path)
-    lambdaRole.addToPrincipalPolicy(new iam.PolicyStatement({
-      actions: ['bedrock:InvokeModel', 'bedrock:GetImportedModel'],
-      resources: [`arn:aws:bedrock:${this.region}:${this.account}:imported-model/*`],
-    }));
 
     // Bedrock On-Demand: invoke the configured model via Converse API.
     // Scoped to the specific model ID rather than foundation-model/*
@@ -106,7 +96,6 @@ export class ApiStack extends cdk.Stack {
       ANALYZE_QUEUE_URL:    props.analysisQueue.queueUrl,
       DESKTOP_URL_PARAM:    desktopUrlParam,
       DESKTOP_PORT_PARAM:   desktopPortParam,
-      BEDROCK_MODEL_ARN_PARAM: bedrockModelArnParam,
       BEDROCK_ONDEMAND_MODEL_ID: 'qwen.qwen3-vl-235b-a22b',
       MODEL_NAME:           modelName,
       POWERTOOLS_SERVICE_NAME: 'coldbones',
@@ -114,13 +103,12 @@ export class ApiStack extends cdk.Stack {
 
     // ─── Shared client module paths ────────────────────────────────────────
     const desktopClientSrc = path.join(lambdaRoot, 'desktop_client.py');
-    const bedrockClientSrc = path.join(lambdaRoot, 'bedrock_client.py');
     const bedrockOndemandClientSrc = path.join(lambdaRoot, 'bedrock_ondemand_client.py');
     const loggerSrc = path.join(lambdaRoot, 'logger.py');
 
     /** Copy shared client modules into a bundle output directory. */
     const copySharedClients = (outputDir: string) => {
-      for (const src of [desktopClientSrc, bedrockClientSrc, bedrockOndemandClientSrc, loggerSrc]) {
+      for (const src of [desktopClientSrc, bedrockOndemandClientSrc, loggerSrc]) {
         if (fs.existsSync(src)) {
           execSync(`cp "${src}" "${outputDir}/"`);
         }
@@ -259,7 +247,6 @@ export class ApiStack extends cdk.Stack {
       providers: {
         cloud: { name: 'Bedrock On-Demand (Qwen3 VL 235B)', status: 'configured', default: true },
         local: { name: 'RTX 5090 (LM Studio)', status: 'configured' },
-        'cloud-cmi': { name: 'Bedrock CMI (Qwen2.5-VL)', status: 'configured' },
       },
     });
     const healthFn = new lambda.Function(this, 'HealthFn', {
