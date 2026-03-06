@@ -564,6 +564,36 @@ class TestHandler:
         result = orch_mod.handler({"jobId": "j1", "lang": "en"}, CTX)
         assert result["statusCode"] == 400
 
+    def test_rejects_oversized_upload_before_inference(self):
+        mock_s3 = MagicMock()
+        mock_s3.get_object.return_value = {
+            "Body": MagicMock(read=MagicMock(return_value=b"x" * 101))
+        }
+        orch_mod.s3_client = mock_s3
+
+        mock_table = MagicMock()
+        mock_ddb = MagicMock()
+        mock_ddb.Table.return_value = mock_table
+        orch_mod.dynamodb = mock_ddb
+        orch_mod.JOBS_TABLE_NAME = "test-jobs"
+
+        original_limit = orch_mod.MAX_UPLOAD_BYTES
+        orch_mod.MAX_UPLOAD_BYTES = 100
+        try:
+            with patch.object(orch_mod, "invoke_ondemand_streaming") as mock_invoke:
+                result = orch_mod.handler({
+                    "jobId": "j-large",
+                    "s3Key": "uploads/abc/large.png",
+                    "lang": "en",
+                    "filename": "large.png",
+                    "provider": "ondemand",
+                }, CTX)
+            assert result["statusCode"] == 413
+            assert "limit" in json.loads(result["body"])["error"].lower()
+            mock_invoke.assert_not_called()
+        finally:
+            orch_mod.MAX_UPLOAD_BYTES = original_limit
+
     def test_ondemand_provider_success(self):
         mock_s3 = MagicMock()
         png_bytes = _make_png_bytes()

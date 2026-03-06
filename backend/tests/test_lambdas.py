@@ -73,7 +73,7 @@ class TestGetPresignedUrl:
         _add_lambda("get_presigned_url")
 
     @mock_aws
-    def test_returns_upload_url_and_job_id(self):
+    def test_returns_presigned_post_and_s3_key(self):
         # Create real S3 bucket + DynamoDB table
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket="test-uploads")
@@ -95,8 +95,12 @@ class TestGetPresignedUrl:
         assert result["statusCode"] == 200
         body = json.loads(result["body"])
         assert "uploadUrl" in body
+        assert body.get("uploadMethod") == "POST"
+        assert isinstance(body.get("uploadFields"), dict)
+        assert "key" in body["uploadFields"]
         assert "s3Key" in body
         assert body["s3Key"].endswith(".jpg")
+        assert body.get("maxSizeBytes") == 20 * 1024 * 1024
         assert "Access-Control-Allow-Origin" in result["headers"]
 
     @mock_aws
@@ -144,9 +148,9 @@ class TestGetPresignedUrl:
             import importlib
             import lambdas.get_presigned_url.handler as mod
             importlib.reload(mod)
-            # patch generate_presigned_url to raise
+            # patch generate_presigned_post to raise
             from botocore.exceptions import ClientError
-            with patch.object(mod.s3_client, "generate_presigned_url",
+            with patch.object(mod.s3_client, "generate_presigned_post",
                               side_effect=ClientError({"Error": {"Code": "NoSuchBucket", "Message": "x"}}, "put_object")):
                 result = mod.handler({"body": json.dumps({"filename": "f.jpg", "contentType": "image/jpeg"})}, CTX)
         assert result["statusCode"] == 502
@@ -567,6 +571,7 @@ _ROUTER_ENV = {
     "JOBS_TABLE": "test-jobs",
     "ANALYZE_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123/q",
     "ORCHESTRATOR_FUNCTION_ARN": "arn:aws:lambda:us-east-1:123:function:orch",
+    "UPLOAD_BUCKET": "test-uploads",
 }
 
 
@@ -587,6 +592,9 @@ class TestAnalyzeRouterBranches:
         mock_lambda = MagicMock()
         mock_lambda.invoke.return_value = {"StatusCode": 202}
         mod.lambda_client = mock_lambda
+        mock_s3 = MagicMock()
+        mock_s3.head_object.return_value = {"ContentLength": 1024}
+        mod.s3_client = mock_s3
         mock_table = MagicMock()
         mock_ddb = MagicMock()
         mock_ddb.Table.return_value = mock_table
@@ -594,6 +602,17 @@ class TestAnalyzeRouterBranches:
         mock_sqs = MagicMock()
         mod.sqs_client = mock_sqs
         return mod
+
+    def test_rejects_oversized_upload(self):
+        with patch.dict("os.environ", _ROUTER_ENV):
+            mod = self._setup_mod()
+            mod.s3_client.head_object.return_value = {"ContentLength": 21 * 1024 * 1024}
+            event = {"body": json.dumps({"s3Key": "uploads/a/b.jpg", "provider": "cloud"})}
+            result = mod.handler(event, CTX)
+
+        assert result["statusCode"] == 413
+        assert "limit" in json.loads(result["body"])["detail"].lower()
+        mod.lambda_client.invoke.assert_not_called()
 
     def test_cloud_cmi_provider(self):
         with patch.dict("os.environ", _ROUTER_ENV):

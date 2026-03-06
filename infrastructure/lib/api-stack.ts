@@ -258,7 +258,7 @@ export class ApiStack extends cdk.Stack {
       provider:     'Bedrock On-Demand (cloud-primary)',
       providers: {
         cloud: { name: 'Bedrock On-Demand (Qwen3 VL 235B)', status: 'configured', default: true },
-        local: { name: 'RTX 5090 (LM Studio)', status: 'unknown' },
+        local: { name: 'RTX 5090 (LM Studio)', status: 'configured' },
         'cloud-cmi': { name: 'Bedrock CMI (Qwen2.5-VL)', status: 'configured' },
       },
     });

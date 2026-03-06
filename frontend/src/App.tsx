@@ -167,6 +167,26 @@ export default function App() {
   // Count files ready to analyze
   const uploadedCount = files.filter((f) => f.status === 'uploaded').length;
 
+  const selectedProviderLabel =
+    provider === 'local'
+      ? 'LM Studio'
+      : provider === 'cloud'
+      ? 'Bedrock On-Demand'
+      : provider === 'cloud-cmi'
+      ? 'Bedrock CMI'
+      : health?.provider.split('(')[0].trim() ?? 'Provider';
+
+  const selectedProviderHealthy =
+    provider === 'local'
+      ? (health?.providers?.local?.status
+          ? health.providers.local.status === 'configured'
+          : (health?.model_loaded ?? false))
+      : provider === 'cloud'
+      ? (health?.providers?.cloud?.status
+          ? health.providers.cloud.status === 'configured'
+          : (health?.model_loaded ?? false))
+      : (health?.model_loaded ?? false);
+
   return (
     <div className="app">
       {/* Header */}
@@ -179,12 +199,12 @@ export default function App() {
           <ModeToggle disabled={isBusy} />
           <ProviderPicker disabled={isBusy} health={health} />
           <div className="health-indicator">
-            {health?.model_loaded ? (
+            {health && selectedProviderHealthy ? (
               <span
                 className="health-ok"
                 title={`${health.provider} · ${health.model}`}
               >
-                ● <span className="health-label">{health.provider.split('(')[0].trim()}</span>
+                ● <span className="health-label">{selectedProviderLabel}</span>
               </span>
             ) : health ? (
               <span

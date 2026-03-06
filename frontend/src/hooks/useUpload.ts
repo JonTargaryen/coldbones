@@ -72,8 +72,8 @@ async function _uploadToS3(
   update({ status: 'uploading', progress: 0 });
 
   try {
-    // Step 1: Ask our API for a presigned PUT URL.  The Lambda generates
-    // a short-lived S3 URL scoped to the exact key and content-type.
+    // Step 1: Ask our API for upload credentials. The backend may return
+    // either a presigned POST policy (preferred) or a legacy presigned PUT URL.
     const presignRes = await fetch(`${API}/api/presign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -88,9 +88,12 @@ async function _uploadToS3(
       throw new Error((err as Record<string, string>).detail ?? `Presign failed: ${presignRes.status}`);
     }
 
-    const { uploadUrl, s3Key }: PresignResponse = await presignRes.json();
+    const { uploadUrl, s3Key, uploadMethod, uploadFields }: PresignResponse = await presignRes.json();
+    const usePost = uploadMethod === 'POST' && !!uploadFields;
 
-    // Step 2: PUT the file bytes directly to S3 using the presigned URL.
+    // Step 2: Upload directly to S3.
+    // - Preferred: presigned POST multipart form (supports content-length policy)
+    // - Fallback: legacy presigned PUT URL
     // We use XMLHttpRequest instead of fetch() because XHR exposes
     // upload.onprogress, which lets us show a live progress bar.
     // fetch() does not expose upload progress in any standard way.
@@ -107,11 +110,20 @@ async function _uploadToS3(
           : reject(new Error(`S3 upload failed: ${xhr.status}`)),
       );
       xhr.addEventListener('error', () => reject(new Error('S3 upload network error')));
-      xhr.open('PUT', uploadUrl);
-      // S3 presigned PUT URLs require the Content-Type header to match the
-      // one used when signing, otherwise S3 returns 403 SignatureDoesNotMatch.
-      xhr.setRequestHeader('Content-Type', entry.file.type);
-      xhr.send(entry.file);
+      xhr.open(usePost ? 'POST' : 'PUT', uploadUrl);
+
+      if (usePost && uploadFields) {
+        const formData = new FormData();
+        for (const [k, v] of Object.entries(uploadFields)) {
+          formData.append(k, v);
+        }
+        formData.append('file', entry.file);
+        xhr.send(formData);
+      } else {
+        // Legacy presigned PUT: Content-Type must match the signed value.
+        xhr.setRequestHeader('Content-Type', entry.file.type);
+        xhr.send(entry.file);
+      }
     });
 
     // Step 3: Record the s3Key on the file entry so the analyse button can

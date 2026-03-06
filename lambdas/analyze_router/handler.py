@@ -51,11 +51,14 @@ from bedrock_ondemand_client import is_ondemand_available
 
 lambda_client = boto3.client('lambda')
 sqs_client    = boto3.client('sqs')
+s3_client     = boto3.client('s3')
 dynamodb      = boto3.resource('dynamodb')
 
 ORCHESTRATOR_FUNCTION_ARN = os.environ.get('ORCHESTRATOR_FUNCTION_ARN', '')
 ANALYZE_QUEUE_URL          = os.environ.get('ANALYZE_QUEUE_URL', '')
 JOBS_TABLE                 = os.environ.get('JOBS_TABLE', '')
+UPLOAD_BUCKET              = os.environ.get('UPLOAD_BUCKET', '')
+MAX_UPLOAD_BYTES           = int(os.environ.get('MAX_UPLOAD_BYTES', 20 * 1024 * 1024))
 
 _HEADERS = {
     'Content-Type': 'application/json',
@@ -79,6 +82,12 @@ def handler(event: dict, _context: Any) -> dict:
 
     if not s3_key:
         return _error(400, 'Missing s3Key')
+
+    # Server-side size enforcement (defense-in-depth): reject oversized
+    # uploads even if a client bypasses frontend validation.
+    size_error = _validate_upload_size(s3_key)
+    if size_error:
+        return size_error
 
     job_id = str(uuid.uuid4())
     payload = {
@@ -227,6 +236,33 @@ def _enqueue(payload: dict, fallback: bool = False) -> dict:
         }
     except ClientError as e:
         return _error(502, f'SQS enqueue failed: {e}')
+
+
+def _validate_upload_size(s3_key: str) -> dict | None:
+    """Validate S3 object size against MAX_UPLOAD_BYTES.
+
+    Returns an HTTP error dict when validation fails, else None.
+    """
+    if not UPLOAD_BUCKET:
+        # Misconfigured environment: skip size check rather than blocking
+        # all traffic. The orchestrator still performs a defensive check.
+        return None
+
+    try:
+        head = s3_client.head_object(Bucket=UPLOAD_BUCKET, Key=s3_key)
+    except ClientError as e:
+        code = e.response.get('Error', {}).get('Code', '')
+        if code in {'404', 'NoSuchKey', 'NotFound'}:
+            return _error(404, f'Upload not found for s3Key: {s3_key}')
+        return _error(502, f'Could not validate upload size: {e}')
+
+    size_bytes = int(head.get('ContentLength', 0))
+    if size_bytes > MAX_UPLOAD_BYTES:
+        size_mb = size_bytes / (1024 * 1024)
+        limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+        return _error(413, f'File exceeds {limit_mb:.0f} MB limit ({size_mb:.1f} MB).')
+
+    return None
 
 
 def _error(status: int, msg: str) -> dict:

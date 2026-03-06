@@ -78,6 +78,7 @@ UPLOAD_BUCKET    = os.environ['UPLOAD_BUCKET']
 JOBS_TABLE_NAME  = os.environ.get('JOBS_TABLE', '')
 MAX_TOKENS       = int(os.environ.get('MAX_INFERENCE_TOKENS', 16384))
 MAX_PDF_PAGES    = int(os.environ.get('MAX_PDF_PAGES', 20))
+MAX_UPLOAD_BYTES = int(os.environ.get('MAX_UPLOAD_BYTES', 20 * 1024 * 1024))
 
 # ── Image compression settings ──────────────────────────────────────────────
 # Qwen3 VL processes images in tile grids.  Sending images larger than ~1568px
@@ -181,6 +182,12 @@ def handler(event: dict, _context: Any) -> dict:
     except ClientError as e:
         log.exception('s3_download_failed', exc=e)
         return _error(502, f'S3 download failed: {e}', job_id)
+
+    if file_size > MAX_UPLOAD_BYTES:
+        size_mb = file_size / (1024 * 1024)
+        limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+        log.error('upload_too_large', file_size_bytes=file_size, limit_bytes=MAX_UPLOAD_BYTES)
+        return _error(413, f'File exceeds {limit_mb:.0f} MB limit ({size_mb:.1f} MB).', job_id)
 
     content_type = _detect_magic_type(file_bytes, s3_key)
     if not content_type:

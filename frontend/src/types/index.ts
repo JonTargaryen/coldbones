@@ -131,8 +131,11 @@ export interface SlowJob {
 
 export interface PresignResponse {
   uploadUrl: string;
+  uploadMethod?: 'PUT' | 'POST';
+  uploadFields?: Record<string, string>;
   s3Key: string;
   expiresIn: number;
+  maxSizeBytes?: number;
 }
 
 export interface Language {

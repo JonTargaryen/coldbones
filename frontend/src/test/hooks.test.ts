@@ -480,7 +480,17 @@ describe('useUpload', () => {
     globalThis.fetch = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({ uploadUrl: 'https://s3/put', s3Key: 'uploads/test.png', expiresIn: 3600 }),
+        Promise.resolve({
+          uploadUrl: 'https://s3/post',
+          uploadMethod: 'POST',
+          uploadFields: {
+            key: 'uploads/test.png',
+            policy: 'fake-policy',
+            'x-amz-signature': 'fake-signature',
+          },
+          s3Key: 'uploads/test.png',
+          expiresIn: 3600,
+        }),
     })
     globalThis.XMLHttpRequest = makeXhrClass('success') as any
 

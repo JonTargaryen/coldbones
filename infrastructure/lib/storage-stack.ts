@@ -102,9 +102,9 @@ export class StorageStack extends cdk.Stack {
     // useful.  Aborting incomplete multipart uploads after 1 day prevents
     // orphaned parts from accumulating storage cost.
     //
-    // CORS: only PUT and HEAD are needed because the browser reads a presigned
-    // PUT URL from our API and then PUTs directly to S3.  GET is handled
-    // server-side (Lambda downloads the file; the browser never fetches it).
+    // CORS: POST is needed for presigned form uploads to S3. We keep PUT+HEAD
+    // for backward compatibility during transitions. GET is handled server-side
+    // (Lambda downloads the file; the browser never fetches it directly).
     this.uploadBucket = new s3.Bucket(this, 'UploadBucket', {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -118,7 +118,7 @@ export class StorageStack extends cdk.Stack {
       ],
       cors: [
         {
-          allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.HEAD],
+          allowedMethods: [s3.HttpMethods.POST, s3.HttpMethods.PUT, s3.HttpMethods.HEAD],
           allowedOrigins: [
             'https://app.omlahiri.com',
             'https://www.omlahiri.com',

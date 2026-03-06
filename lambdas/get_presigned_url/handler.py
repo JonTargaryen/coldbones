@@ -1,20 +1,22 @@
 """
 Lambda: get-presigned-url
 
-Why presigned URLs instead of uploading through API Gateway / Lambda?
+Why presigned S3 uploads instead of uploading through API Gateway / Lambda?
   API Gateway has a 10 MB payload limit and a 29 s timeout.  Routing an image
-  or PDF through it would hit both limits for larger files.  A presigned PUT URL
+    or PDF through it would hit both limits for larger files.  A presigned S3 POST
   lets the browser upload directly to S3 at full S3 throughput (~tens of MB/s)
   without touching our backend at all after the URL is generated.
 
 Flow:
-  1. Browser POST /api/presign  → this Lambda generates a presigned PUT URL
-  2. Browser PUT <file bytes> directly to that S3 URL  (no Lambda involved)
+    1. Browser POST /api/presign  → this Lambda generates a presigned POST form
+    2. Browser POST multipart/form-data directly to S3  (no Lambda involved)
   3. Browser POST /api/analyze  → analyze_router picks up the s3Key
 
 Security:
-  - The presigned URL is scoped to a single key, single content-type, and
+    - The presigned policy is scoped to a single key and single content-type, and
     expires in PRESIGN_EXPIRY_SECONDS (default 300 s = 5 min).
+    - The policy enforces content-length-range (1..20 MB), so S3 rejects oversize
+        uploads before they ever reach analyze_router.
   - AllowedContentTypes prevents someone from uploading arbitrary file types
     with a forged content-type header.
   - The upload bucket has a 1-day lifecycle rule: objects expire automatically,
@@ -26,8 +28,14 @@ Event (API Gateway proxy):
   Body: { "filename": "photo.jpg", "contentType": "image/jpeg" }
 
 Returns:
-  { "uploadUrl": "https://…", "s3Key": "uploads/<uuid>/photo.jpg",
-    "expiresIn": 300 }
+    {
+        "uploadUrl": "https://<bucket>.s3.amazonaws.com/",
+        "uploadMethod": "POST",
+        "uploadFields": { ...policy fields... },
+        "s3Key": "uploads/<uuid>/photo.jpg",
+        "expiresIn": 300,
+        "maxSizeBytes": 20971520
+    }
 """
 
 import json
@@ -47,8 +55,8 @@ UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
 PRESIGN_EXPIRY = int(os.environ.get("PRESIGN_EXPIRY_SECONDS", 300))
 
 # Maximum upload size: 20 MB (matches frontend validation).
-# Enforced server-side via presigned URL conditions so even a crafted
-# PUT bypassing the browser will be rejected by S3.
+# Enforced server-side in analyze_router (pre-invoke) and again in
+# analyze_orchestrator (defense-in-depth) using S3 object size.
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 # Allowlist — matched against the Content-Type the browser declares.
@@ -63,7 +71,7 @@ ALLOWED_CONTENT_TYPES = {
 
 
 def handler(event: dict, _context: Any) -> dict:
-    """Lambda entry point: generate a presigned S3 PUT URL for file upload."""
+    """Lambda entry point: generate a presigned S3 POST policy for upload."""
     raw_body = event.get("body") or "{}"
     try:
         body = json.loads(raw_body)
@@ -91,29 +99,27 @@ def handler(event: dict, _context: Any) -> dict:
     s3_key = f"uploads/{file_uuid}/{safe_name}"
 
     try:
-        upload_url = s3_client.generate_presigned_url(
-            "put_object",
-            Params={
-                "Bucket": UPLOAD_BUCKET,
-                "Key": s3_key,
-                "ContentType": content_type,
-            },
+        # Presigned POST supports policy conditions, including strict
+        # content-length-range enforcement directly at S3.
+        post = s3_client.generate_presigned_post(
+            Bucket=UPLOAD_BUCKET,
+            Key=s3_key,
+            Fields={"Content-Type": content_type},
+            Conditions=[
+                {"Content-Type": content_type},
+                ["content-length-range", 1, MAX_UPLOAD_BYTES],
+            ],
             ExpiresIn=PRESIGN_EXPIRY,
-            HttpMethod="PUT",
         )
-
-        # Also generate a presigned POST with content-length enforcement.
-        # The presigned URL itself can't enforce content-length, but we
-        # record the limit so the orchestrator can verify after upload.
-        # S3 will reject PUTs > 5 GB natively, but this tighter limit
-        # prevents abuse within the 20 MB we actually support.
     except ClientError as e:
         return _error(502, f"Could not generate presigned URL: {e}")
 
     return {
         "statusCode": 200,
         "body": json.dumps({
-            "uploadUrl": upload_url,
+            "uploadUrl": post["url"],
+            "uploadMethod": "POST",
+            "uploadFields": post["fields"],
             "s3Key": s3_key,
             "expiresIn": PRESIGN_EXPIRY,
             "maxSizeBytes": MAX_UPLOAD_BYTES,
